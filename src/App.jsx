@@ -13,18 +13,18 @@ import ApiBellaBot from "./pages/Apibella.jsx";
 
 export default function App() {
   return (
-      <Routes>
-        <Route path="login" element={<LoginLayout />} />
-        <Route path="admin" element={<AdminLayout />}>
-          <Route index element={<Navigate to="dashboard" replace />} />
-          <Route path="dashboard" element={<Dashboard />} />
-          <Route path="logs" element={<Logs />} />
-          <Route path="maps" element={<Maps />} />
-          <Route path="explorer" element={<ApiExplorer />} />
-          <Route path="apicc" element={<Apicc1 />} />
-          <Route path="apibella" element={<ApiBellaBot />} />
-        </Route>
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
+    <Routes>
+      <Route path="login" element={<LoginLayout />} />
+      <Route path="admin" element={<AdminLayout />}>
+        <Route index element={<Navigate to="dashboard" replace />} />
+        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="logs" element={<Logs />} />
+        <Route path="maps" element={<Maps />} />
+        <Route path="explorer" element={<ApiExplorer />} />
+        <Route path="apicc" element={<Apicc1 />} />
+        <Route path="apibella" element={<ApiBellaBot />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/login" replace />} />
+    </Routes>
   );
 }

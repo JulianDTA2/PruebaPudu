@@ -1,612 +1,2695 @@
-// src/pages/Apibella.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Card } from "../components/Card.jsx";
 import Button from "../components/Button.jsx";
 import NeumorphicModal from "../components/NeumorphicModal.jsx";
 import { get, post } from "../services/api.js";
 
-// ---------- Utilidades de tiempo para Analytics (segundos UNIX) ----------
+/**
+ * =========================
+ *  Utilidades compartidas
+ * =========================
+ */
 const toUnixSec = (d) => Math.floor(new Date(d).getTime() / 1000);
-const nowSec = () => Math.floor(Date.now() / 1000);
-const daysAgoSec = (n) => nowSec() - n * 24 * 60 * 60;
-// timezone_offset: minutos respecto a UTC (positivos al este)
-const tzOffsetMinutes = -new Date().getTimezoneOffset();
+const diffDays = (a, b) =>
+  Math.max(0, Math.round((toUnixSec(b) - toUnixSec(a)) / 86400));
+const getDefaultTzHours = () =>
+  Math.round(-new Date().getTimezoneOffset() / 60);
+const chooseUnit = (choice, startDate, endDate) =>
+  choice === "auto"
+    ? diffDays(startDate, endDate) > 1
+      ? "day"
+      : "hour"
+    : choice;
+const c = (key, label = key) => ({ key, label });
 
 function Spinner({ className = "" }) {
   return (
-    <svg className={`animate-spin h-4 w-4 ${className}`} viewBox="0 0 24 24" aria-hidden="true" role="img" focusable="false">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4A4 4 0 008 12H4z" />
+    <svg
+      className={`animate-spin h-4 w-4 ${className}`}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+        fill="none"
+      />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8v4A4 4 0 008 12H4z"
+      />
     </svg>
   );
 }
 
-// ===================== Página principal =====================
-export default function Apibella() {
-  // -------- Explorer manual ----------
-  const [method, setMethod] = useState("GET");
-  const [path, setPath] = useState("/data-board/v1/analysis/task/delivery");
-  const [query, setQuery] = useState("");
-  const [body, setBody] = useState("{}");
-  const [manualRes, setManualRes] = useState(null);
-  const [manualErr, setManualErr] = useState(null);
+const renderTable = (rows, columns) => (
+  <div className="mt-3 overflow-x-auto">
+    <table className="min-w-full">
+      <thead>
+        <tr>
+          {columns.map((col) => (
+            <th key={col.key}>{col.label}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <tr key={i}>
+            {columns.map((col) => (
+              <td key={col.key}>
+                <span className="cell-header">{col.key}</span>
+                {col.render ? col.render(r) : r[col.key] ?? 0}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+);
 
-  // -------- Estado base: tiendas/robots --------
-  const [shops, setShops] = useState([]);
-  const [shopsLoading, setShopsLoading] = useState(false);
-  const [shopsErr, setShopsErr] = useState(null);
-  const [shopId, setShopId] = useState("");
+/**
+ * =========================
+ *  Configuración por módulo
+ * =========================
+ *  Cada módulo define:
+ *  - rutas
+ *  - cómo construir KPIs
+ *  - columnas de tablas (summary / qoq / list por robot|shop)
+ */
+const MODULES = {
+  delivery: {
+    key: "delivery",
+    summaryTitle: "Resumen del período (Delivery)",
+    listTitle: "Detalle por robot/tienda (Delivery · paginado)",
+    popupPrefix: "Delivery",
+    pathSummary: "/data-board/v1/analysis/task/delivery",
+    pathList: "/data-board/v1/analysis/task/delivery/paging",
+    kpis: (res) => {
+      const s = res?.summary || {};
+      const q = res?.qoq || {};
+      return [
+        { label: "Km operados", value: s.mileage ?? 0, prev: q.mileage },
+        {
+          label: "Horas de operación",
+          value: s.duration ?? 0,
+          prev: q.duration,
+        },
+        {
+          label: "Mesas entregadas",
+          value: s.table_count ?? 0,
+          prev: q.table_count,
+        },
+        { label: "Bandejas", value: s.tray_count ?? 0, prev: q.tray_count },
+        { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
+      ];
+    },
+    chartCols: [
+      c("task_time"),
+      c("mileage", "mileage (km)"),
+      c("duration", "duration (h)"),
+      c("table_count"),
+      c("tray_count"),
+      c("task_count"),
+    ],
+    qoqCols: [
+      c("task_time"),
+      c("mileage"),
+      c("duration"),
+      c("table_count", "table"),
+      c("tray_count", "tray"),
+      c("task_count", "tasks"),
+    ],
+    listCols: {
+      robot: [
+        c("task_time"),
+        c("sn"),
+        c("robot_name"),
+        c("product_code"),
+        c("shop_name"),
+        c("mileage"),
+        c("duration"),
+        c("table_count"),
+        c("tray_count"),
+        c("task_count"),
+        c("speed", "speed (m/s)"),
+      ],
+      shop: [
+        c("task_time"),
+        c("shop_id"),
+        c("shop_name"),
+        c("run_count"),
+        c("bind_count"),
+        c("mileage"),
+        c("duration"),
+        c("table_count"),
+        c("tray_count"),
+        c("task_count"),
+        c("speed", "speed (m/s)"),
+        c("work_days"),
+      ],
+    },
+  },
+  cruise: {
+    key: "cruise",
+    summaryTitle: "Machine mission analysis · Cruise mode",
+    listTitle: "Detalle por robot/tienda (Cruise · paginado)",
+    popupPrefix: "Cruise",
+    pathSummary: "/data-board/v1/analysis/task/cruise",
+    pathList: "/data-board/v1/analysis/task/cruise/paging",
+    kpis: (res) => {
+      const s = res?.summary || {};
+      const q = res?.qoq || {};
+      return [
+        { label: "Km operados", value: s.mileage ?? 0, prev: q.mileage },
+        {
+          label: "Horas de operación",
+          value: s.duration ?? 0,
+          prev: q.duration,
+        },
+        {
+          label: "Interacciones",
+          value: s.interactive_count ?? 0,
+          prev: q.interactive_count,
+        },
+        {
+          label: "Duración interacciones (h)",
+          value: s.interactive_duration ?? 0,
+          prev: q.interactive_duration,
+        },
+        { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
+      ];
+    },
+    chartCols: [
+      c("task_time"),
+      c("mileage", "mileage (km)"),
+      c("duration", "duration (h)"),
+      c("interactive_count"),
+      c("interactive_duration", "interactive_duration (h)"),
+      c("task_count"),
+    ],
+    qoqCols: [
+      c("task_time"),
+      c("mileage"),
+      c("duration"),
+      c("interactive_count"),
+      c("interactive_duration"),
+      c("task_count"),
+    ],
+    listCols: {
+      robot: [
+        c("task_time"),
+        c("sn"),
+        c("robot_name"),
+        c("product_code"),
+        c("shop_name"),
+        c("mileage"),
+        c("duration"),
+        c("interactive_count"),
+        c("interactive_duration"),
+        c("task_count", "tasks"),
+      ],
+      shop: [
+        c("task_time"),
+        c("shop_id"),
+        c("shop_name"),
+        c("run_count"),
+        c("bind_count"),
+        c("mileage"),
+        c("duration"),
+        c("interactive_count"),
+        c("interactive_duration"),
+        c("task_count", "tasks"),
+        c("work_days"),
+      ],
+    },
+  },
+  greeter: {
+    key: "greeter",
+    summaryTitle: "Machine task analysis · Lead mode (Greeter)",
+    listTitle: "Detalle por robot/tienda (Greeter · paginado)",
+    popupPrefix: "Greeter",
+    pathSummary: "/data-board/v1/analysis/task/greeter",
+    pathList: "/data-board/v1/analysis/task/greeter/paging",
+    kpis: (res) => {
+      const s = res?.summary || {};
+      const q = res?.qoq || {};
+      return [
+        { label: "Km operados", value: s.mileage ?? 0, prev: q.mileage },
+        {
+          label: "Horas de operación",
+          value: s.duration ?? 0,
+          prev: q.duration,
+        },
+        {
+          label: "Destinos/Leads",
+          value: s.destination_count ?? 0,
+          prev: q.destination_count,
+        },
+        { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
+      ];
+    },
+    chartCols: [
+      c("task_time"),
+      c("mileage", "mileage (km)"),
+      c("duration", "duration (h)"),
+      c("destination_count"),
+      c("task_count"),
+    ],
+    qoqCols: [
+      c("task_time"),
+      c("mileage"),
+      c("duration"),
+      c("destination_count"),
+      c("task_count"),
+    ],
+    listCols: {
+      robot: [
+        c("task_time"),
+        c("sn"),
+        c("robot_name"),
+        c("product_code"),
+        c("shop_name"),
+        c("mileage"),
+        c("duration"),
+        c("destination_count"),
+        c("task_count"),
+      ],
+      shop: [
+        c("task_time"),
+        c("shop_id"),
+        c("shop_name"),
+        c("run_count"),
+        c("bind_count"),
+        c("mileage"),
+        c("duration"),
+        c("destination_count"),
+        c("task_count"),
+        c("work_days"),
+      ],
+    },
+  },
+  interactive: {
+    key: "interactive",
+    summaryTitle: "Interactive mode · resumen",
+    listTitle: "Detalle por robot/tienda (Interactive · paginado)",
+    popupPrefix: "Interactive",
+    pathSummary: "/data-board/v1/analysis/task/interactive",
+    pathList: "/data-board/v1/analysis/task/interactive/paging",
+    kpis: (res) => {
+      const s = res?.summary || {};
+      const q = res?.qoq || {};
+      return [
+        {
+          label: "Interacciones",
+          value: s.interactive_count ?? 0,
+          prev: q.interactive_count,
+        },
+        { label: "Voces", value: s.voice_count ?? 0, prev: q.voice_count },
+        {
+          label: "Duración voz (h)",
+          value: s.voice_duration ?? 0,
+          prev: q.voice_duration,
+        },
+      ];
+    },
+    chartCols: [
+      c("task_time"),
+      c("interactive_count"),
+      c("voice_count"),
+      c("voice_duration", "voice_duration (h)"),
+    ],
+    qoqCols: [
+      c("task_time"),
+      c("interactive_count"),
+      c("voice_count"),
+      c("voice_duration", "voice_duration (h)"),
+    ],
+    listCols: {
+      robot: [
+        c("task_time"),
+        c("sn"),
+        c("robot_name"),
+        c("product_code"),
+        c("shop_name"),
+        c("interactive_count"),
+        c("voice_count"),
+        c("voice_duration", "voice_duration (h)"),
+      ],
+      shop: [
+        c("task_time"),
+        c("shop_id"),
+        c("shop_name"),
+        c("run_count"),
+        c("bind_count"),
+        c("interactive_count"),
+        c("voice_count"),
+        c("voice_duration", "voice_duration (h)"),
+        c("work_days"),
+      ],
+    },
+  },
+  solicit: {
+    key: "solicit",
+    summaryTitle: "Customer collection / Pick-up · resumen",
+    listTitle: "Detalle por robot/tienda (Pick-up · paginado)",
+    popupPrefix: "Pick-up",
+    pathSummary: "/data-board/v1/analysis/task/solicit",
+    pathList: "/data-board/v1/analysis/task/solicit/paging",
+    kpis: (res) => {
+      const s = res?.summary || {};
+      const q = res?.qoq || {};
+      return [
+        { label: "Horas operación", value: s.duration ?? 0, prev: q.duration },
+        { label: "Saludos", value: s.play_count ?? 0, prev: q.play_count },
+        {
+          label: "Alcance",
+          value: s.attach_persons ?? 0,
+          prev: q.attach_persons,
+        },
+        {
+          label: "Atraídos",
+          value: s.attract_persons ?? 0,
+          prev: q.attract_persons,
+        },
+        {
+          label: "Interacciones",
+          value: s.interactive_count ?? 0,
+          prev: q.interactive_count,
+        },
+        { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
+      ];
+    },
+    chartCols: [
+      c("task_time"),
+      c("duration", "duration (h)"),
+      c("play_count"),
+      c("attach_persons"),
+      c("attract_persons"),
+      c("interactive_count"),
+      c("task_count"),
+    ],
+    qoqCols: [
+      c("task_time"),
+      c("duration", "duration (h)"),
+      c("play_count"),
+      c("attach_persons"),
+      c("attract_persons"),
+      c("interactive_count"),
+      c("task_count"),
+    ],
+    listCols: {
+      robot: [
+        c("task_time"),
+        c("sn"),
+        c("robot_name"),
+        c("product_code"),
+        c("shop_name"),
+        c("duration", "duration (h)"),
+        c("play_count"),
+        c("attach_persons"),
+        c("attract_persons"),
+        c("interactive_count"),
+        c("task_count"),
+      ],
+      shop: [
+        c("task_time"),
+        c("shop_id"),
+        c("shop_name"),
+        c("run_count"),
+        c("bind_count"),
+        c("duration", "duration (h)"),
+        c("play_count"),
+        c("attach_persons"),
+        c("attract_persons"),
+        c("interactive_count"),
+        c("task_count"),
+        c("work_days"),
+      ],
+    },
+  },
+  grid: {
+    key: "grid",
+    summaryTitle: "Grid clicks · resumen",
+    listTitle: "Detalle por robot/tienda (Grid clicks · paginado)",
+    popupPrefix: "Grid",
+    pathSummary: "/data-board/v1/analysis/task/grid",
+    pathList: "/data-board/v1/analysis/task/grid/paging",
+    kpis: (res) => {
+      const s = res?.summary || {};
+      const q = res?.qoq || {};
+      const pair = (k, l) => ({ label: l, value: s[k] ?? 0, prev: q[k] });
+      return [
+        pair("take_me_in_count", "Clicks: llévame dentro"),
+        pair("featured_item_count", "Clicks: destacados"),
+        pair("favorable_promotions_count", "Clicks: promos"),
+        pair("guide_to_menu_count", "Clicks: pick-up"),
+        pair("poster_count", "Clicks: póster"),
+        pair("usher_count", "Clicks: guía"),
+        pair("dance_count", "Clicks: baile"),
+        pair("video_poster_count", "Clicks: video"),
+      ];
+    },
+    chartCols: [
+      c("task_time"),
+      c("take_me_in_count"),
+      c("featured_item_count"),
+      c("favorable_promotions_count"),
+      c("guide_to_menu_count"),
+      c("poster_count"),
+      c("usher_count"),
+      c("dance_count"),
+      c("video_poster_count"),
+    ],
+    qoqCols: [
+      c("task_time"),
+      c("take_me_in_count"),
+      c("featured_item_count"),
+      c("favorable_promotions_count"),
+      c("guide_to_menu_count"),
+      c("poster_count"),
+      c("usher_count"),
+      c("dance_count"),
+      c("video_poster_count"),
+    ],
+    listCols: {
+      robot: [
+        c("task_time"),
+        c("sn"),
+        c("robot_name"),
+        c("product_code"),
+        c("shop_name"),
+        c("take_me_in_count"),
+        c("featured_item_count"),
+        c("favorable_promotions_count"),
+        c("guide_to_menu_count"),
+        c("poster_count"),
+        c("usher_count"),
+        c("dance_count"),
+        c("video_poster_count"),
+      ],
+      shop: [
+        c("task_time"),
+        c("shop_id"),
+        c("shop_name"),
+        c("run_count"),
+        c("bind_count"),
+        c("take_me_in_count"),
+        c("featured_item_count"),
+        c("favorable_promotions_count"),
+        c("guide_to_menu_count"),
+        c("poster_count"),
+        c("usher_count"),
+        c("dance_count"),
+        c("video_poster_count"),
+        c("work_days"),
+      ],
+    },
+  },
+  ad: {
+    key: "ad",
+    summaryTitle: "Advertising mode · resumen",
+    listTitle: "Detalle por robot/tienda (Advertising · paginado)",
+    popupPrefix: "Advertising",
+    pathSummary: "/data-board/v1/analysis/task/ad",
+    pathList: "/data-board/v1/analysis/task/ad/paging",
+    includeAdId: true,
+    kpis: (res) => {
+      const s = res?.summary || {};
+      const q = res?.qoq || {};
+      const m = (label, val, prev) => ({ label, value: val ?? 0, prev });
+      return [
+        m("Tiny play (h)", s.tiny_play_duration, q?.tiny_play_duration),
+        m("Tiny plays", s.tiny_play_times, q?.tiny_play_times),
+        m("Big play (h)", s.big_play_duration, q?.big_play_duration),
+        m("Big plays", s.big_play_times, q?.big_play_times),
+      ];
+    },
+    chartCols: [
+      c("task_time"),
+      c("tiny_play_duration", "tiny_play_duration (h)"),
+      c("tiny_play_times"),
+      c("big_play_duration", "big_play_duration (h)"),
+      c("big_play_times"),
+    ],
+    qoqCols: [
+      c("task_time"),
+      c("tiny_play_duration", "tiny_play_duration (h)"),
+      c("tiny_play_times"),
+      c("big_play_duration", "big_play_duration (h)"),
+      c("big_play_times"),
+    ],
+    listCols: {
+      robot: [
+        c("task_time"),
+        c("sn"),
+        c("robot_name"),
+        c("product_code"),
+        c("shop_name"),
+        c("tiny_play_duration", "tiny_play_duration (h)"),
+        c("tiny_play_times"),
+        c("big_play_duration", "big_play_duration (h)"),
+        c("big_play_times"),
+      ],
+      shop: [
+        c("task_time"),
+        c("shop_id"),
+        c("shop_name"),
+        c("run_count"),
+        c("bind_count"),
+        c("tiny_play_duration", "tiny_play_duration (h)"),
+        c("tiny_play_times"),
+        c("big_play_duration", "big_play_duration (h)"),
+        c("big_play_times"),
+        c("work_days"),
+      ],
+    },
+  },
+  recovery: {
+    key: "recovery",
+    summaryTitle: "Return / Recovery mode · resumen",
+    listTitle: "Detalle por robot/tienda (Recovery · paginado)",
+    popupPrefix: "Recovery",
+    pathSummary: "/data-board/v1/analysis/task/recovery",
+    pathList: "/data-board/v1/analysis/task/recovery/paging",
+    kpis: (res) => {
+      const s = res?.summary || {};
+      const q = res?.qoq || {};
+      return [
+        { label: "Km", value: s.mileage ?? 0, prev: q.mileage },
+        { label: "Horas", value: s.duration ?? 0, prev: q.duration },
+        { label: "Mesas", value: s.table_count ?? 0, prev: q.table_count },
+        { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
+      ];
+    },
+    chartCols: [
+      c("task_time"),
+      c("mileage", "mileage (km)"),
+      c("duration", "duration (h)"),
+      c("table_count"),
+      c("task_count"),
+    ],
+    qoqCols: [
+      c("task_time"),
+      c("mileage"),
+      c("duration"),
+      c("table_count"),
+      c("task_count"),
+    ],
+    listCols: {
+      robot: [
+        c("task_time"),
+        c("sn"),
+        c("robot_name"),
+        c("product_code"),
+        c("shop_name"),
+        c("mileage"),
+        c("duration"),
+        c("table_count"),
+        c("task_count"),
+        c("speed", "speed (m/s)"),
+      ],
+      shop: [
+        c("task_time"),
+        c("shop_id"),
+        c("shop_name"),
+        c("run_count"),
+        c("bind_count"),
+        c("mileage"),
+        c("duration"),
+        c("table_count"),
+        c("task_count"),
+        c("speed", "speed (m/s)"),
+        c("work_days"),
+      ],
+    },
+  },
+  call: {
+    key: "call",
+    summaryTitle: "Call pattern · resumen",
+    listTitle: "Detalle por robot/tienda (Call pattern · paginado)",
+    popupPrefix: "Call",
+    pathSummary: "/data-board/v1/analysis/task/call",
+    pathList: "/data-board/v1/analysis/task/call/paging",
+    kpis: (res) => {
+      const s = res?.summary || {};
+      const q = res?.qoq || {};
+      return [
+        { label: "Km", value: s.mileage ?? 0, prev: q.mileage },
+        { label: "Horas", value: s.duration ?? 0, prev: q.duration },
+        { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
+        {
+          label: "Destinos",
+          value: s.destination_count ?? 0,
+          prev: q.destination_count,
+        },
+        {
+          label: "Destinos completados",
+          value: s.finished_destination_count ?? 0,
+          prev: q.finished_destination_count,
+        },
+      ];
+    },
+    chartCols: [
+      c("task_time"),
+      c("mileage", "mileage (km)"),
+      c("duration", "duration (h)"),
+      c("task_count"),
+      c("destination_count"),
+      c("finished_destination_count"),
+    ],
+    qoqCols: [
+      c("task_time"),
+      c("mileage"),
+      c("duration"),
+      c("task_count"),
+      c("destination_count"),
+      c("finished_destination_count"),
+    ],
+    listCols: {
+      robot: [
+        c("task_time"),
+        c("sn"),
+        c("robot_name"),
+        c("product_code"),
+        c("shop_name"),
+        c("mileage"),
+        c("duration"),
+        c("task_count"),
+        c("destination_count"),
+        c("finished_destination_count"),
+      ],
+      shop: [
+        c("task_time"),
+        c("shop_id"),
+        c("shop_name"),
+        c("run_count"),
+        c("bind_count"),
+        c("mileage"),
+        c("duration"),
+        c("task_count"),
+        c("destination_count"),
+        c("finished_destination_count"),
+        c("work_days"),
+      ],
+    },
+  },
+};
 
-  const [sn, setSn] = useState("");
-  const [robots, setRobots] = useState([]);
-  const [robotsLoading, setRobotsLoading] = useState(false);
-  const [robotsErr, setRobotsErr] = useState(null);
+/**
+ * =========================
+ *  Hook reutilizable por módulo
+ * =========================
+ */
+function useModule({
+  config,
+  startDate,
+  endDate,
+  tzOffset,
+  shopId,
+  adId,
+  getWithPopup,
+  showError,
+}) {
+  const [timeUnit, setTimeUnit] = useState("auto");
+  const [loadingSummary, setLoadingSummary] = useState(false);
+  const [summaryRes, setSummaryRes] = useState(null);
 
-  // -------- Mapas & puntos --------
-  const [maps, setMaps] = useState([]);
-  const [currentMap, setCurrentMap] = useState(null);
-  const [selectedMapName, setSelectedMapName] = useState("");
-  const [points, setPoints] = useState([]);
-  const [selectedPoint, setSelectedPoint] = useState("");
+  const [listTimeUnit, setListTimeUnit] = useState("auto"); // auto | day | hour | all
+  const [groupBy, setGroupBy] = useState("robot"); // robot | shop
+  const [limit, setLimit] = useState(10); // 1..20
+  const [offset, setOffset] = useState(0);
+  const [loadingList, setLoadingList] = useState(false);
+  const [listRes, setListRes] = useState(null);
 
-  // -------- Operaciones (custom_call / doors / recharge) --------
-  const [callMode, setCallMode] = useState("CALL"); // IMG | VIDEO | QR | CONFIRM | CALL
-  const [modeData, setModeData] = useState("");     // JSON o texto según modo
-  const [callTaskId, setCallTaskId] = useState(""); // para cancel/complete
-  const [callDeviceName, setCallDeviceName] = useState(""); // p. ej. "kiosk-1"
-  const [nextCallTask, setNextCallTask] = useState(""); // encadenar
-
-  // Doors
-  const [doorState, setDoorState] = useState(null);
-  const [doorRawPayload, setDoorRawPayload] = useState('[{"index":0,"open":true}]');
-
-  // -------- Analytics (delivery) --------
-  const [startDate, setStartDate] = useState(new Date(Date.now()-6*24*3600*1000).toISOString().slice(0,10));
-  const [endDate, setEndDate] = useState(new Date().toISOString().slice(0,10));
-  const [timeUnit, setTimeUnit] = useState("day"); // day|week|month
-  const [groupBy, setGroupBy] = useState("sn");    // sn | shop_id
-  const [deliverySummary, setDeliverySummary] = useState(null);
-  const [analyticsLoading, setAnalyticsLoading] = useState(false);
-
-  // -------- Ads --------
-  const [adsKind, setAdsKind] = useState(""); // opcional
-  const [ads, setAds] = useState([]);
-  const [adsLoading, setAdsLoading] = useState(false);
-  const [adSelectedId, setAdSelectedId] = useState("");
-  const [adDetail, setAdDetail] = useState(null);
-  const [adsBodyJson, setAdsBodyJson] = useState(`{
-  "shop_id": "",
-  "ad_list": [],
-  "scenes": [],
-  "start_time": ${Date.now()},
-  "end_time": ${Date.now() + 7*24*3600*1000}
-}`);
-
-  // -------- UI estados comunes --------
-  const [execLoading, setExecLoading] = useState(false);
-  const [alertState, setAlertState] = useState(null);
-  const [confirmState, setConfirmState] = useState(null);
-
-  // ---------- Helpers UI ----------
-  function parseErr(e) {
-    const d = e?.response?.data;
-    if (typeof d === "string") return d;
-    return d?.message ?? d?.code ?? e?.message ?? (typeof e === "string" ? e : JSON.stringify(e));
-  }
-  function showError(e, title = "Ocurrió un error") {
-    const message = typeof e === "string" ? e : parseErr(e);
-    setAlertState({ title, message, variant: "error" });
-  }
-  function showWarning(msg, title = "Aviso") {
-    const message = typeof msg === "string" ? msg : String(msg ?? "");
-    setAlertState({ title, message, variant: "warning" });
-  }
-  function showSuccess(msg, title = "Listo") {
-    const message = typeof msg === "string" ? msg : String(msg ?? "");
-    setAlertState({ title, message, variant: "success" });
-  }
-
-  // ===================== Data Open Platform: Tiendas & Robots =====================
-  async function loadShops() {
+  async function fetchSummary() {
     try {
-      setShopsLoading(true); setShopsErr(null);
-      const limit = 100; let offset = 0; let all = []; let loops = 0; const MAX_LOOPS = 20;
-      while (loops < MAX_LOOPS) {
-        const data = await get("/data-open-platform-service/v1/api/shop", { limit, offset });
-        const list = data?.data?.list || [];
-        all = all.concat(list);
-        if (list.length < limit) break;
-        offset += limit; loops++;
-      }
-      const seen = new Set();
-      const uniq = all.filter(s => {
-        const id = String(s?.shop_id ?? "");
-        if (!id || seen.has(id)) return false;
-        seen.add(id); return true;
-      }).sort((a,b)=>String(a.shop_id).localeCompare(String(b.shop_id)));
-      setShops(uniq);
-      if (!shopId && uniq[0]?.shop_id) setShopId(String(uniq[0].shop_id));
-    } catch (e) {
-      setShopsErr(e?.response?.data || e?.message);
-      showError(e, "Error al cargar tiendas");
-    } finally { setShopsLoading(false); }
-  }
-
-  async function loadRobots(currentShopId) {
-    if (!currentShopId) { setRobots([]); setSn(""); return; }
-    try {
-      setRobotsLoading(true); setRobotsErr(null);
-      const limit = 100; let offset = 0; let all = []; let loops = 0; const MAX_LOOPS = 30;
-      while (loops < MAX_LOOPS) {
-        const data = await get("/data-open-platform-service/v1/api/robot", { limit, offset, shop_id: currentShopId });
-        const list = data?.data?.list || [];
-        all = all.concat(list);
-        if (list.length < limit) break;
-        offset += limit; loops++;
-      }
-      const seen = new Set();
-      const uniq = all.filter(r => {
-        const id = String(r?.sn ?? "");
-        if (!id || seen.has(id)) return false;
-        seen.add(id); return true;
-      }).sort((a,b)=>String(a.sn).localeCompare(String(b.sn)));
-      setRobots(uniq);
-      if (!uniq.some(r=>String(r.sn)===String(sn))) setSn(uniq[0]?.sn || "");
-    } catch (e) {
-      setRobotsErr(e?.response?.data || e?.message);
-      showError(e, "Error al cargar dispositivos");
-    } finally { setRobotsLoading(false); }
-  }
-
-  useEffect(()=>{ loadShops(); },[]);
-  useEffect(()=>{ if (shopId) loadRobots(shopId); },[shopId]);
-
-  const shopLabel = (s) => `${s.shop_id} — ${s.shop_name || s.name || s.alias || s.nickname || "Tienda"}`;
-  const robotLabel = (r) => `${r.sn}${r.nickname ? " — " + r.nickname : ""}${r.product_code ? " · " + r.product_code : ""}`;
-
-  // ===================== Mapas & Puntos =====================
-  async function loadMaps() {
-    if (!sn) return showWarning("Selecciona un SN para cargar mapas.", "Recordatorio");
-    try {
-      const list = await get("/map-service/v1/open/list", { sn });
-      const items = list?.data?.list || list?.data || [];
-      setMaps(items);
-    } catch (e) { showError(e, "Error al cargar mapas"); }
-  }
-  async function loadCurrentMap(needElement = false) {
-    if (!sn) return showWarning("Selecciona un SN para cargar el mapa en uso.", "Recordatorio");
-    try {
-      const data = await get("/map-service/v1/open/current", { sn, need_element: needElement });
-      setCurrentMap(data?.data || null);
-      if (data?.data?.name) setSelectedMapName(data.data.name);
-    } catch (e) { showError(e, "Error al cargar mapa actual"); }
-  }
-  async function loadPoints(limit = 200, offset = 0) {
-    if (!sn) return showWarning("Selecciona un SN para cargar puntos de mapa.", "Recordatorio");
-    try {
-      const data = await get("/map-service/v1/open/point", { sn, limit, offset });
-      const list = data?.data?.list || data?.data || [];
-      setPoints(list);
-      if (list[0]) setSelectedPoint(list[0].name || list[0].point || list[0].id || "");
-    } catch (e) { showError(e, "Error al cargar puntos"); }
-  }
-
-  // ===================== Operaciones =====================
-  async function callRobot() {
-    if (!sn) return showWarning("Debes elegir un SN para hacer la llamada.", "Recordatorio");
-    if (!selectedMapName) return showWarning("Selecciona map_name.", "Recordatorio");
-    if (!selectedPoint) return showWarning("Selecciona un punto del mapa.", "Recordatorio");
-    try {
-      setExecLoading(true);
-      const payload = {
-        sn,
-        shop_id: shopId || undefined,
-        map_name: selectedMapName,
-        point: selectedPoint,
-        call_mode: callMode,
-        mode_data: modeData ? (()=>{ try{return JSON.parse(modeData);}catch{ return modeData; } })() : undefined,
-      };
-      const res = await post("/open-platform-service/v1/custom_call", payload);
-      setCallTaskId(res?.data?.task_id || res?.data?.id || callTaskId);
-      showSuccess("Llamada enviada correctamente.");
-    } catch (e) { showError(e, "Error al llamar al robot"); }
-    finally { setExecLoading(false); }
-  }
-
-  async function cancelCall() {
-    if (!callTaskId || !callDeviceName) return showWarning("Completa task_id y call_device_name.", "Faltan datos");
-    try {
-      setExecLoading(true);
-      await post("/open-platform-service/v1/custom_call/cancel", { task_id: callTaskId, call_device_name: callDeviceName });
-      showSuccess("Llamada cancelada.");
-    } catch (e) { showError(e, "Error al cancelar llamada"); }
-    finally { setExecLoading(false); }
-  }
-
-  async function completeCall() {
-    if (!callTaskId || !callDeviceName) return showWarning("Completa task_id y call_device_name.", "Faltan datos");
-    try {
-      setExecLoading(true);
-      const payload = { task_id: callTaskId, call_device_name: callDeviceName };
-      if (nextCallTask) payload.next_call_task = nextCallTask;
-      await post("/open-platform-service/v1/custom_call/complete", payload);
-      showSuccess("Llamada completada.");
-    } catch (e) { showError(e, "Error al completar llamada"); }
-    finally { setExecLoading(false); }
-  }
-
-  async function rechargeOneClick() {
-    if (!sn) return showWarning("Elige un SN para intentar recarga.", "Recordatorio");
-    try {
-      setExecLoading(true);
-      await get("/open-platform-service/v1/recharge", { sn });
-      showSuccess("Comando de recarga enviado.");
-    } catch (e) { showError(e, "Error al enviar recarga"); }
-    finally { setExecLoading(false); }
-  }
-
-  async function readDoorState() {
-    if (!sn) return showWarning("Elige un SN para consultar cajones.", "Recordatorio");
-    try {
-      setExecLoading(true);
-      const data = await get("/open-platform-service/v1/door_state", { sn });
-      setDoorState(data?.data || data);
-    } catch (e) { showError(e, "Error al consultar estado de cajones"); }
-    finally { setExecLoading(false); }
-  }
-
-  async function controlDoors(raw = null) {
-    if (!sn) return showWarning("Elige un SN para controlar cajones.", "Recordatorio");
-    try {
-      setExecLoading(true);
-      const payload = { sn, payload: {} };
-      let control_states = [];
-      if (raw) {
-        control_states = raw;
-      } else {
-        control_states = JSON.parse(doorRawPayload);
-      }
-      payload.payload.control_states = control_states;
-      await post("/open-platform-service/v1/control_doors", payload);
-      showSuccess("Comando enviado a cajones.");
-    } catch (e) { showError(e, "Error al controlar cajones"); }
-    finally { setExecLoading(false); }
-  }
-
-  // ===================== Analytics: delivery =====================
-  async function loadDeliveryAnalytics() {
-    if (!shopId) return showWarning("Selecciona una tienda para analytics.", "Recordatorio");
-    try {
-      setAnalyticsLoading(true);
+      setLoadingSummary(true);
+      setSummaryRes(null);
+      const start = toUnixSec(startDate + "T00:00:00");
+      const end = toUnixSec(endDate + "T23:59:59");
+      const chosenUnit = chooseUnit(timeUnit, startDate, endDate);
       const params = {
-        shop_id: shopId,
-        start_time: toUnixSec(startDate + "T00:00:00"),
-        end_time: toUnixSec(endDate + "T23:59:59"),
-        time_unit: timeUnit,
-        timezone_offset: tzOffsetMinutes,
-        group_by: groupBy
+        start_time: start,
+        end_time: end,
+        timezone_offset: Number(tzOffset),
+        time_unit: chosenUnit,
       };
-      const data = await get("/data-board/v1/analysis/task/delivery", params);
-      setDeliverySummary(data?.data || data);
-    } catch (e) { showError(e, "Error al cargar analytics de delivery"); }
-    finally { setAnalyticsLoading(false); }
+      if (shopId) params.shop_id = shopId;
+      if (config.includeAdId && adId) params.ad_id = Number(adId);
+      const data = await getWithPopup(
+        `${config.popupPrefix} · resumen`,
+        config.pathSummary,
+        params
+      );
+      setSummaryRes(data?.data || data);
+    } catch (e) {
+      showError(e, `No se pudo obtener el análisis (${config.key})`);
+    } finally {
+      setLoadingSummary(false);
+    }
   }
 
-  // ===================== Ads =====================
-  async function listAds() {
-    if (!shopId && !sn) return showWarning("Ingresa shop_id o SN para listar Ads.", "Recordatorio");
+  async function fetchList(customOffset = null) {
     try {
-      setAdsLoading(true);
-      const payload = { shop_id: shopId || undefined, sn: sn || undefined, kind: adsKind || undefined, limit: 50, offset: 0 };
-      const data = await post("/biz-service/openPlatform/api/v1/gg/list", payload);
-      const list = data?.data?.list || data?.data || [];
-      setAds(list);
-      setAdSelectedId(list[0]?.id || "");
-    } catch (e) { showError(e, "Error al listar anuncios"); }
-    finally { setAdsLoading(false); }
+      setLoadingList(true);
+      const start = toUnixSec(startDate + "T00:00:00");
+      const end = toUnixSec(endDate + "T23:59:59");
+      const chosenUnit = chooseUnit(listTimeUnit, startDate, endDate);
+      const params = {
+        start_time: start,
+        end_time: end,
+        timezone_offset: Number(tzOffset),
+        time_unit: chosenUnit,
+        group_by: listTimeUnit === "all" ? "shop" : groupBy,
+        offset: customOffset ?? offset,
+        limit: Number(limit),
+      };
+      if (shopId) params.shop_id = shopId;
+      if (config.includeAdId && adId) params.ad_id = Number(adId);
+      const data = await getWithPopup(
+        `${config.popupPrefix} · lista`,
+        config.pathList,
+        params
+      );
+      setListRes(data?.data || data);
+      if (customOffset != null) setOffset(customOffset);
+    } catch (e) {
+      showError(e, `No se pudo obtener la lista paginada (${config.key})`);
+    } finally {
+      setLoadingList(false);
+    }
   }
 
-  async function getAd() {
-    if (!shopId || !adSelectedId) return showWarning("shop_id e id son obligatorios.", "Recordatorio");
-    try {
-      const data = await get("/biz-service/openPlatform/api/v1/gg/get", { shop_id: shopId, id: adSelectedId });
-      setAdDetail(data?.data || data);
-    } catch (e) { showError(e, "Error al obtener anuncio"); }
-  }
+  const clearSummary = () => setSummaryRes(null);
+  const clearList = () => {
+    setListRes(null);
+    setOffset(0);
+  };
 
-  async function createOrUpdateAd(kind) {
-    try {
-      const payload = JSON.parse(adsBodyJson || "{}");
-      if (!payload.shop_id) payload.shop_id = shopId;
-      await post(`/biz-service/openPlatform/api/v1/gg/${kind}`, payload); // create | update
-      showSuccess(`Anuncio ${kind === "create" ? "creado" : "actualizado"}.`);
-    } catch (e) { showError(e, `Error al ${kind === "create" ? "crear" : "actualizar"} anuncio`); }
-  }
+  return {
+    // summary
+    timeUnit,
+    setTimeUnit,
+    loadingSummary,
+    summaryRes,
+    fetchSummary,
+    clearSummary,
+    // list
+    listTimeUnit,
+    setListTimeUnit,
+    groupBy,
+    setGroupBy,
+    limit,
+    setLimit,
+    offset,
+    setOffset,
+    loadingList,
+    listRes,
+    fetchList,
+    clearList,
+  };
+}
 
-  async function deleteAd() {
-    if (!shopId || !adSelectedId) return showWarning("shop_id e id requeridos para eliminar.", "Recordatorio");
-    try {
-      await post("/biz-service/openPlatform/api/v1/gg/delete", { shop_id: shopId, id: adSelectedId });
-      showSuccess("Anuncio eliminado.");
-    } catch (e) { showError(e, "Error al eliminar anuncio"); }
-  }
+/**
+ * =========================
+ *  Secciones UI reutilizables (100% responsive)
+ * =========================
+ */
+function SummarySection({ title, module, state }) {
+  const {
+    timeUnit,
+    setTimeUnit,
+    loadingSummary,
+    summaryRes,
+    fetchSummary,
+    clearSummary,
+  } = state;
+  const chart = summaryRes?.chart || [];
+  const qoqChart = summaryRes?.qoq_chart || [];
+  const kpis = useMemo(() => module.kpis(summaryRes), [summaryRes, module]);
 
-  // ===================== Explorer manual =====================
-  async function runManual() {
-    try {
-      setManualErr(null);
-      const params = Object.fromEntries(new URLSearchParams(query));
-      const data = method === "GET" ? await get(path, params) : await post(path, JSON.parse(body || "{}"));
-      setManualRes(data);
-    } catch (e) { setManualErr(e?.response?.data || e?.message || String(e)); showError(e, "Error en consulta manual"); }
-  }
-
-  // ===================== Render =====================
   return (
-    <div className="mx-auto w-full max-w-screen-2xl px-3 sm:px-4 md:px-6 py-6 min-h-screen">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6">
-        <Card className="lg:col-span-12">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <h2>Panel de servicio / delivery</h2>
-            {execLoading && <Spinner />}
-          </div>
-
-          {/* Selección básica */}
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+    <Card className="lg:col-span-12">
+      <h2>{title}</h2>
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-5 gap-3">
+        <div className="min-w-0">
+          <label className="block text-sm text-slate-500">time_unit</label>
+          <select
+            className="input w-full"
+            value={timeUnit}
+            onChange={(e) => setTimeUnit(e.target.value)}
+          >
+            <option value="auto">auto</option>
+            <option value="day">day</option>
+            <option value="hour">hour</option>
+          </select>
+          <p className="text-xs mt-1">auto: por día si &gt; 24h.</p>
+        </div>
+        <div className="md:col-span-4">
+          {/* Botones con su propio espacio siempre */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
-              <label className="block text-sm text-slate-500">Tienda</label>
-              <select className="input w-full" value={shopId} onChange={(e)=>setShopId(e.target.value)}>
-                {shopsLoading && <option>Cargando…</option>}
-                {shopsErr && <option>Error cargando</option>}
-                {!shopsLoading && !shopsErr && shops.length===0 && <option value="">— sin tiendas —</option>}
-                {!shopsLoading && !shopsErr && shops.map(s=>(
-                  <option key={s.shop_id} value={String(s.shop_id)}>{shopLabel(s)}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm text-slate-500">Robot SN</label>
-              <select className="input w-full" value={sn} onChange={(e)=>setSn(e.target.value)}>
-                {robotsLoading && <option>Cargando…</option>}
-                {robotsErr && <option>Error cargando</option>}
-                {!robotsLoading && !robotsErr && robots.length===0 && <option value="">— sin dispositivos —</option>}
-                {!robotsLoading && !robotsErr && robots.map(r=>(
-                  <option key={r.sn} value={r.sn}>{robotLabel(r)}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-end gap-2">
-              <Button onClick={loadMaps} disabled={!sn}>Cargar mapas</Button>
-              <Button onClick={()=>loadCurrentMap(false)} disabled={!sn}>Mapa actual</Button>
-              <Button onClick={()=>loadPoints(200,0)} disabled={!sn}>Cargar puntos</Button>
-            </div>
-          </div>
-
-          {/* Mapas / Puntos */}
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm text-slate-500">map_name</label>
-              <select className="input w-full" value={selectedMapName} onChange={(e)=>setSelectedMapName(e.target.value)}>
-                {!maps?.length && <option value={currentMap?.name || ""}>{currentMap?.name || "—"}</option>}
-                {maps?.map(m => (
-                  <option key={m.name || m.map_name} value={m.name || m.map_name}>
-                    {m.name || m.map_name}
-                  </option>
-                ))}
-              </select>
-              {currentMap?.name && (
-                <div className="text-xs text-slate-500 mt-1">En uso: <b>{currentMap.name}</b></div>
-              )}
+              <Button
+                onClick={fetchSummary}
+                disabled={loadingSummary}
+                className="w-full"
+              >
+                {loadingSummary ? (
+                  <>
+                    <Spinner /> Consultando…
+                  </>
+                ) : (
+                  "Consultar"
+                )}
+              </Button>
             </div>
             <div>
-              <label className="block text-sm text-slate-500">Punto</label>
-              <select className="input w-full" value={selectedPoint} onChange={(e)=>setSelectedPoint(e.target.value)}>
-                {!points.length && <option value="">— sin puntos —</option>}
-                {points.map((p,idx)=>(
-                  <option key={p.id || p.name || idx} value={p.name || p.point || p.id}>
-                    {(p.type ? `${p.type} · ` : "") + (p.name || p.point || p.id)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-2 items-end">
-              <div>
-                <label className="block text-sm text-slate-500">call_mode</label>
-                <select className="input w-full" value={callMode} onChange={(e)=>setCallMode(e.target.value)}>
-                  <option value="CALL">CALL</option>
-                  <option value="CONFIRM">CONFIRM</option>
-                  <option value="IMG">IMG</option>
-                  <option value="VIDEO">VIDEO</option>
-                  <option value="QR">QR</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm text-slate-500">mode_data (opcional)</label>
-                <input className="input w-full" placeholder='JSON o texto (según modo)' value={modeData} onChange={(e)=>setModeData(e.target.value)} />
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button onClick={callRobot} disabled={!sn || !selectedMapName || !selectedPoint || execLoading}>Llamar al punto</Button>
-            <Button onClick={rechargeOneClick} disabled={!sn || execLoading}>Recarga 1-click</Button>
-            <Button onClick={readDoorState} disabled={!sn || execLoading}>Estado cajones</Button>
-          </div>
-
-          {/* Cancel/Complete de llamada */}
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm text-slate-500">task_id</label>
-              <input className="input w-full" value={callTaskId} onChange={(e)=>setCallTaskId(e.target.value)} placeholder="task_id de la llamada" />
-            </div>
-            <div>
-              <label className="block text-sm text-slate-500">call_device_name</label>
-              <input className="input w-full" value={callDeviceName} onChange={(e)=>setCallDeviceName(e.target.value)} placeholder="Origen (p.ej. kiosk-1)" />
-            </div>
-            <div className="grid grid-cols-2 gap-2 items-end">
-              <div>
-                <label className="block text-sm text-slate-500">next_call_task (opcional)</label>
-                <input className="input w-full" value={nextCallTask} onChange={(e)=>setNextCallTask(e.target.value)} placeholder="task para encadenar" />
-              </div>
-              <div className="flex gap-2 items-end">
-                <Button onClick={completeCall} disabled={!callTaskId || !callDeviceName || execLoading}>Completar</Button>
-                <Button onClick={cancelCall} disabled={!callTaskId || !callDeviceName || execLoading}>Cancelar</Button>
-              </div>
-            </div>
-          </div>
-
-          {/* Cajones: control rápido + raw */}
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <div className="font-medium">Control de cajones</div>
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={()=>controlDoors([{index:0,open:true},{index:1,open:true},{index:2,open:true}])} disabled={!sn || execLoading}>Abrir todos</Button>
-                <Button onClick={()=>controlDoors([{index:0,open:false},{index:1,open:false},{index:2,open:false}])} disabled={!sn || execLoading}>Cerrar todos</Button>
-              </div>
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-sm text-slate-500">payload.control_states (JSON)</label>
-              <textarea className="input w-full h-24" value={doorRawPayload} onChange={(e)=>setDoorRawPayload(e.target.value)} />
-              <div className="mt-2">
-                <Button onClick={()=>controlDoors()} disabled={!sn || execLoading}>Enviar payload</Button>
-              </div>
-            </div>
-          </div>
-        </Card>
-
-        {/* Analytics: Delivery */}
-        <Card className="lg:col-span-8">
-          <h2>Analytics · Delivery</h2>
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-5 gap-3">
-            <div>
-              <label className="block text-sm text-slate-500">Inicio</label>
-              <input type="date" className="input w-full" value={startDate} onChange={(e)=>setStartDate(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-sm text-slate-500">Fin</label>
-              <input type="date" className="input w-full" value={endDate} onChange={(e)=>setEndDate(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-sm text-slate-500">time_unit</label>
-              <select className="input w-full" value={timeUnit} onChange={(e)=>setTimeUnit(e.target.value)}>
-                <option value="day">day</option>
-                <option value="week">week</option>
-                <option value="month">month</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm text-slate-500">group_by</label>
-              <select className="input w-full" value={groupBy} onChange={(e)=>setGroupBy(e.target.value)}>
-                <option value="sn">sn</option>
-                <option value="shop_id">shop_id</option>
-              </select>
-            </div>
-            <div className="flex items-end">
-              <Button onClick={loadDeliveryAnalytics} disabled={!shopId || analyticsLoading}>
-                {analyticsLoading ? (<><Spinner /> Cargando…</>) : "Consultar"}
+              <Button onClick={clearSummary} className="w-full">
+                Limpiar
               </Button>
             </div>
           </div>
-          <pre className="mt-3 max-h-80 overflow-auto text-xs bg-black/5 p-3 rounded">{JSON.stringify(deliverySummary, null, 2) || "—"}</pre>
-        </Card>
-
-        {/* Ads */}
-        <Card className="lg:col-span-4">
-          <h2>Ads</h2>
-          <div className="mt-3 grid grid-cols-1 gap-3">
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <label className="block text-sm text-slate-500">kind (opcional)</label>
-                <input className="input w-full" value={adsKind} onChange={(e)=>setAdsKind(e.target.value)} placeholder="p.ej. promo" />
-              </div>
-              <div className="flex items-end">
-                <Button onClick={listAds} disabled={adsLoading}>{adsLoading ? "Cargando…" : "Listar"}</Button>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm text-slate-500">Anuncios</label>
-              <select className="input w-full" value={adSelectedId} onChange={(e)=>setAdSelectedId(e.target.value)}>
-                {!ads.length && <option value="">— sin anuncios —</option>}
-                {ads.map(a=>(
-                  <option key={a.id} value={a.id}>{a.id} · {a.name || a.title || "(sin título)"}</option>
-                ))}
-              </select>
-              <div className="mt-2 flex gap-2">
-                <Button onClick={getAd} disabled={!adSelectedId}>Ver detalle</Button>
-                <Button onClick={deleteAd} disabled={!adSelectedId}>Eliminar</Button>
-              </div>
-              <pre className="mt-2 max-h-60 overflow-auto text-xs bg-black/5 p-2 rounded">{JSON.stringify(adDetail, null, 2) || "—"}</pre>
-            </div>
-
-            <div>
-              <div className="font-medium mb-1">Crear / Actualizar</div>
-              <textarea className="input w-full h-36" value={adsBodyJson} onChange={(e)=>setAdsBodyJson(e.target.value)} />
-              <div className="mt-2 flex gap-2">
-                <Button onClick={()=>createOrUpdateAd("create")}>Crear</Button>
-                <Button onClick={()=>createOrUpdateAd("update")}>Actualizar</Button>
-              </div>
-            </div>
-          </div>
-        </Card>
-
-        {/* Explorer manual */}
-        <Card className="lg:col-span-12">
-          <h2>Explorer manual</h2>
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-6 gap-3">
-            <div>
-              <label className="block text-sm text-slate-500">Método</label>
-              <select className="input w-full" value={method} onChange={(e)=>setMethod(e.target.value)}>
-                <option>GET</option>
-                <option>POST</option>
-              </select>
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-sm text-slate-500">Endpoint</label>
-              <input className="input w-full" value={path} onChange={(e)=>setPath(e.target.value)} placeholder="/data-board/v1/analysis/task/delivery" />
-            </div>
-            <div className="md:col-span-3">
-              <label className="block text-sm text-slate-500">Query (GET)</label>
-              <input className="input w-full" value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="shop_id=451170001&start_time=...&end_time=..." />
-            </div>
-          </div>
-          {method === "POST" && (
-            <div className="mt-3">
-              <label className="block text-sm text-slate-500">Body (POST)</label>
-              <textarea className="input w-full h-32" value={body} onChange={(e)=>setBody(e.target.value)} />
-            </div>
-          )}
-          <div className="mt-3">
-            <Button onClick={runManual}>{manualErr ? "Reintentar" : "Ejecutar"}</Button>
-          </div>
-          <pre className="mt-3 max-h-80 overflow-auto text-xs bg-black/5 p-3 rounded">{manualErr ? String(manualErr) : JSON.stringify(manualRes, null, 2) || "—"}</pre>
-        </Card>
+        </div>
       </div>
 
-      {/* ===================== MODALES ===================== */}
-      <NeumorphicModal
-        open={!!confirmState}
-        title={confirmState?.title}
-        confirmText={confirmState?.confirmText || "Confirmar"}
-        cancelText={confirmState?.cancelText || "Cancelar"}
-        onCancel={() => { confirmState?.resolve?.(false); setConfirmState(null); }}
-        onConfirm={() => { confirmState?.resolve?.(true); setConfirmState(null); }}
-        solidBackdrop
-      >
-        {confirmState?.message}
-      </NeumorphicModal>
+      {summaryRes && (
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          {kpis.map((k) => (
+            <div key={k.label} className="stat-card">
+              <div className="stat-label">{k.label}</div>
+              <div className="stat-value">{k.value}</div>
+              {k.prev != null && (
+                <div className="stat-hint">Periodo previo: {k.prev}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
+      {chart.length > 0 && renderTable(chart, module.chartCols)}
+      {qoqChart.length > 0 && renderTable(qoqChart, module.qoqCols)}
+    </Card>
+  );
+}
+
+function ListSection({ title, module, state }) {
+  const {
+    listTimeUnit,
+    setListTimeUnit,
+    groupBy,
+    setGroupBy,
+    limit,
+    setLimit,
+    offset,
+    setOffset,
+    loadingList,
+    listRes,
+    fetchList,
+    clearList,
+  } = state;
+
+  const makePager = (res, offsetVal, limitVal) => {
+    const total = res?.total ?? 0;
+    const from = total ? offsetVal + 1 : 0;
+    const to = Math.min(offsetVal + Number(limitVal), total);
+    const list = res?.list || [];
+    return { total, from, to, list };
+  };
+
+  const { total, from, to, list } = makePager(listRes, offset, limit);
+
+  return (
+    <Card className="lg:col-span-12">
+      <h2>{title}</h2>
+      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
+        <div className="min-w-0">
+          <label className="block text-sm text-slate-500">group_by</label>
+          <select
+            className="input w-full"
+            value={groupBy}
+            onChange={(e) => setGroupBy(e.target.value)}
+          >
+            <option value="robot">robot</option>
+            <option value="shop">shop</option>
+          </select>
+        </div>
+        <div className="min-w-0">
+          <label className="block text-sm text-slate-500">
+            time_unit (list)
+          </label>
+          <select
+            className="input w-full"
+            value={listTimeUnit}
+            onChange={(e) => setListTimeUnit(e.target.value)}
+          >
+            <option value="auto">auto</option>
+            <option value="day">day</option>
+            <option value="hour">hour</option>
+            <option value="all">all</option>
+          </select>
+          <p className="text-xs mt-1">“all” solo con group_by=shop.</p>
+        </div>
+        <div className="min-w-0">
+          <label className="block text-sm text-slate-500">limit</label>
+          <input
+            className="input-neu w-full"
+            value={limit}
+            onChange={(e) =>
+              setLimit(Math.max(1, Math.min(20, Number(e.target.value) || 10)))
+            }
+            inputMode="numeric"
+            placeholder="1..20"
+          />
+        </div>
+        <div className="min-w-0">
+          <label className="block text-sm text-slate-500">offset</label>
+          <input
+            className="input-neu w-full"
+            value={offset}
+            onChange={(e) =>
+              setOffset(Math.max(0, Number(e.target.value) || 0))
+            }
+            inputMode="numeric"
+          />
+        </div>
+
+        {/* Bloque de acciones y estado - cada botón con su propio espacio */}
+        <div className="lg:col-span-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 items-stretch">
+            <div>
+              <Button
+                onClick={() => fetchList(0)}
+                disabled={loadingList}
+                className="w-full"
+              >
+                Consultar lista
+              </Button>
+            </div>
+            <div>
+              <Button onClick={clearList} className="w-full">
+                Limpiar
+              </Button>
+            </div>
+            {total > 0 && (
+              <div className="text-sm text-slate-500 flex items-center justify-center sm:justify-end">
+                Mostrando {from}-{to} de {total}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {list.length > 0 && renderTable(list, module.listCols[groupBy])}
+
+      {total > 0 && (
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 items-stretch">
+          <div>
+            <Button
+              onClick={() => fetchList(Math.max(0, offset - Number(limit)))}
+              disabled={loadingList || offset === 0}
+              className="w-full"
+            >
+              ← Anterior
+            </Button>
+          </div>
+          <div>
+            <Button
+              onClick={() => fetchList(offset + Number(limit))}
+              disabled={loadingList || offset + Number(limit) >= total}
+              className="w-full"
+            >
+              Siguiente →
+            </Button>
+          </div>
+          <div className="text-sm text-slate-500 flex items-center justify-center sm:justify-start">
+            Página {Math.floor(offset / Number(limit)) + 1} · {from}-{to} de{" "}
+            {total}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * =========================
+ *  Tabs (solo UI) · 100% responsive
+ * =========================
+ */
+function TabsNav({ tabs, activeKey, onChange }) {
+  const handleKeyDown = (e) => {
+    const idx = tabs.findIndex((t) => t.key === activeKey);
+    if (e.key === "ArrowRight") {
+      const next = tabs[(idx + 1) % tabs.length];
+      onChange(next.key);
+    } else if (e.key === "ArrowLeft") {
+      const prev = tabs[(idx - 1 + tabs.length) % tabs.length];
+      onChange(prev.key);
+    }
+  };
+
+  return (
+    <div className="relative -mx-1">
+      <div className="overflow-x-auto px-1" onKeyDown={handleKeyDown}>
+        <div
+          role="tablist"
+          aria-label="Módulos"
+          className="min-w-full flex flex-nowrap gap-2 py-1"
+        >
+          {tabs.map((t) => {
+            const active = t.key === activeKey;
+            return (
+              <button
+                key={t.key}
+                id={`tab-${t.key}`}
+                role="tab"
+                aria-selected={active}
+                aria-controls={`panel-${t.key}`}
+                onClick={() => onChange(t.key)}
+                className={`btn-neu shrink-0 px-3 py-2 text-sm font-medium rounded-md border transition
+                  ${
+                    active
+                      ? "bg-slate-900 text-white border-slate-900"
+                      : "bg-white text-slate-600 hover:text-slate-900 border-slate-200"
+                  }`}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TabPanel({ tabKey, activeKey, children }) {
+  const active = tabKey === activeKey;
+  return (
+    <div
+      role="tabpanel"
+      id={`panel-${tabKey}`}
+      aria-labelledby={`tab-${tabKey}`}
+      hidden={!active}
+      className="contents"
+    >
+      {active && children}
+    </div>
+  );
+}
+
+/**
+ * =========================
+ *  Pestaña: Operaciones
+ * =========================
+ */
+function JsonBlock({ data }) {
+  return (
+    <pre className="mt-3 p-3 bg-slate-50 rounded-md overflow-x-auto text-xs">
+      {data ? JSON.stringify(data, null, 2) : "// sin resultados"}
+    </pre>
+  );
+}
+
+function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
+  // Campos comunes para esta pestaña
+  const [sn, setSn] = useState("");
+  const [needElements, setNeedElements] = useState(true);
+  const [limit, setLimit] = useState(10);
+  const [offset, setOffset] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+
+  // Mapas / puntos
+  const [mapName, setMapName] = useState("");
+  const [pointsList, setPointsList] = useState([]);
+  const [mapsList, setMapsList] = useState([]);
+  const [currentMap, setCurrentMap] = useState(null);
+
+  // Llamadas
+  const [callDeviceName, setCallDeviceName] = useState("appKey");
+  const [callMapName, setCallMapName] = useState("");
+  const [callPoint, setCallPoint] = useState("");
+  const [callPointType, setCallPointType] = useState("");
+  const [callMode, setCallMode] = useState("");
+  const [modeData, setModeData] = useState(
+    JSON.stringify(
+      {
+        urls: [],
+        switch_time: 2,
+        play_count: 1,
+        cancel_btn_time: 0,
+        show_timeout: 30,
+        qrcode: "",
+        text: "",
+      },
+      null,
+      2
+    )
+  );
+  const [taskId, setTaskId] = useState("");
+  const [nextCallTask, setNextCallTask] = useState(
+    JSON.stringify(
+      {
+        map_name: "",
+        point: "",
+        point_type: "table",
+        call_device_name: "appKey",
+        call_mode: "",
+        mode_data: {},
+      },
+      null,
+      2
+    )
+  );
+
+  // Puertas y pantalla
+  const [doorNumber, setDoorNumber] = useState("H_01");
+  const [doorOp, setDoorOp] = useState(true);
+  const [screenContent, setScreenContent] = useState("content");
+  const [screenShow, setScreenShow] = useState(true);
+
+  // Posición
+  const [posInterval, setPosInterval] = useState(3);
+  const [posTimes, setPosTimes] = useState(1);
+
+  // Delivery / Transport
+  const [deliveryPayload, setDeliveryPayload] = useState(
+    JSON.stringify(
+      {
+        type: "NEW",
+        delivery_sort: "AUTO",
+        execute_task: false,
+        trays: [{ destinations: [{ points: "A1", id: "1111" }] }],
+      },
+      null,
+      2
+    )
+  );
+  const [deliveryAction, setDeliveryAction] = useState("START"); // START | COMPLETE | CANCEL_ALL_DELIVERY
+
+  const [transportPayload, setTransportPayload] = useState(
+    JSON.stringify(
+      {
+        task_id: "",
+        type: "NEW",
+        delivery_sort: "AUTO",
+        execute_task: false,
+        start_point: { destination: "", content_type: "IMG", content_data: "" },
+        start_wait_time: 10,
+        end_wait_time: 10,
+        priority: 1,
+        trays: [
+          {
+            destinations: [
+              { points: "A1", id: "1111", name: "item", amount: 1 },
+            ],
+          },
+        ],
+      },
+      null,
+      2
+    )
+  );
+  const [transportAction, setTransportAction] = useState("START");
+
+  // Cancel task
+  const [cancelTasksPayload, setCancelTasksPayload] = useState(
+    JSON.stringify({ tasks: [{ name: "A1", type: "DIRECT" }] }, null, 2)
+  );
+
+  // Estados / grupos / robots
+  const [groupId, setGroupId] = useState("");
+  const [device, setDevice] = useState("");
+  const [robotsGroupId, setRobotsGroupId] = useState("");
+  const [doorCapturePid, setDoorCapturePid] = useState("");
+
+  // Tray order
+  const [trayOrderPayload, setTrayOrderPayload] = useState(
+    JSON.stringify(
+      {
+        orders: [
+          {
+            table_no: "2",
+            table_name: "A2",
+            name: "Tea",
+            amount: 1,
+            id: "id-1",
+          },
+        ],
+      },
+      null,
+      2
+    )
+  );
+
+  // Grouping POST
+  const [groupMapName, setGroupMapName] = useState("");
+
+  // A2B (errand) + control
+  const [errandPayload, setErrandPayload] = useState(
+    JSON.stringify(
+      {
+        auth: "0000",
+        tasks: [
+          {
+            task_name: "task 1",
+            task_desc: "desc",
+            point_list: [
+              {
+                map_name: "map 1",
+                map_code: "xxxx",
+                point: "front desk",
+                point_type: "table",
+                mobile: "",
+                verification_code: "",
+                remark: "",
+              },
+            ],
+          },
+        ],
+      },
+      null,
+      2
+    )
+  );
+  const [errandActionSession, setErrandActionSession] = useState("");
+  const [errandActionType, setErrandActionType] = useState("CANCEL");
+  const [errandActionAuth, setErrandActionAuth] = useState("");
+
+  // Helper
+  const parseJSON = (txt, fallback = {}) => {
+    try {
+      const v = txt ? JSON.parse(txt) : fallback;
+      return v ?? fallback;
+    } catch (e) {
+      showError(e, "JSON inválido");
+      throw e;
+    }
+  };
+
+  // Handlers (cada botón tiene su propio espacio y su propio handler)
+  const run = async (fn) => {
+    try {
+      setBusy(true);
+      const data = await fn();
+      setResult(data?.data || data);
+      return data;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Mapas
+  const handleListMaps = () =>
+    run(() =>
+      getWithPopup("Operaciones · Listar mapas", "/map-service/v1/open/list", {
+        sn,
+      }).then((r) => {
+        const list = r?.data?.list || r?.list || [];
+        setMapsList(list);
+        return r;
+      })
+    );
+
+  const handleCurrentMap = () =>
+    run(() =>
+      getWithPopup(
+        "Operaciones · Mapa actual",
+        "/map-service/v1/open/current",
+        { sn, need_element: needElements }
+      ).then((r) => {
+        setCurrentMap(r?.data || r);
+        return r;
+      })
+    );
+
+  const handlePoints = () =>
+    run(() =>
+      getWithPopup("Operaciones · Puntos", "/map-service/v1/open/point", {
+        sn,
+        limit,
+        offset,
+      }).then((r) => {
+        const list = r?.data?.list || r?.list || [];
+        setPointsList(list);
+        return r;
+      })
+    );
+
+  // Llamadas
+  const handleCall = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · Llamar",
+        "/open-platform-service/v1/custom_call",
+        {
+          sn,
+          map_name: callMapName,
+          point: callPoint,
+          point_type: callPointType || undefined,
+          call_device_name: callDeviceName,
+          call_mode: callMode || undefined,
+          mode_data: parseJSON(modeData, {}),
+        }
+      )
+    );
+
+  const handleCancelCall = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · Cancelar llamada",
+        "/open-platform-service/v1/custom_call/cancel",
+        { task_id: taskId, call_device_name: callDeviceName }
+      )
+    );
+
+  const handleCompleteCall = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · Completar llamada",
+        "/open-platform-service/v1/custom_call/complete",
+        {
+          task_id: taskId,
+          call_device_name: callDeviceName,
+          next_call_task: parseJSON(nextCallTask, undefined),
+        }
+      )
+    );
+
+  // Energía
+  const handleRechargeV1 = () =>
+    run(() =>
+      getWithPopup(
+        "Operaciones · Recargar (v1)",
+        "/open-platform-service/v1/recharge",
+        {
+          sn,
+        }
+      )
+    );
+  const handleRechargeV2 = () =>
+    run(() =>
+      getWithPopup(
+        "Operaciones · Recargar (v2)",
+        "/open-platform-service/v2/recharge",
+        {
+          sn,
+        }
+      )
+    );
+
+  // Puertas
+  const handleDoorState = () =>
+    run(() =>
+      getWithPopup(
+        "Operaciones · Estado de puertas",
+        "/open-platform-service/v1/door_state",
+        {
+          sn,
+        }
+      )
+    );
+
+  const handleControlDoors = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · Control de puertas",
+        "/open-platform-service/v1/control_doors",
+        {
+          sn,
+          payload: {
+            control_states: [{ door_number: doorNumber, operation: !!doorOp }],
+          },
+        }
+      )
+    );
+
+  // Pantalla
+  const handleScreenSet = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · Pantalla",
+        "/open-platform-service/v1/robot/screen/set",
+        {
+          sn,
+          payload: { info: { content: screenContent, show: !!screenShow } },
+        }
+      )
+    );
+
+  // Posición
+  const handlePositionCmd = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · Comando de posición",
+        "/open-platform-service/v1/position_command",
+        {
+          sn,
+          payload: {
+            interval: Number(posInterval),
+            times: Number(posTimes) || 1,
+            source: "openAPI",
+          },
+        }
+      )
+    );
+
+  // Delivery
+  const handleDeliveryTask = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · Delivery task",
+        "/open-platform-service/v1/delivery_task",
+        {
+          sn,
+          payload: parseJSON(deliveryPayload, {}),
+        }
+      )
+    );
+
+  const handleDeliveryAction = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · Delivery action",
+        "/open-platform-service/v1/delivery_action",
+        {
+          sn,
+          payload: { action: deliveryAction },
+        }
+      )
+    );
+
+  // Transport
+  const handleTransportTask = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · Transport task",
+        "/open-platform-service/v1/transport_task",
+        {
+          sn,
+          payload: parseJSON(transportPayload, {}),
+        }
+      )
+    );
+
+  const handleTransportAction = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · Transport action",
+        "/open-platform-service/v1/transport_action",
+        {
+          sn,
+          payload: { action: transportAction },
+        }
+      )
+    );
+
+  // Map switch (ascensor)
+  const handleSwitchInElevator = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · Cambiar mapa (ascensor)",
+        "/open-platform-service/v1/robot/map/switch_in_elevator",
+        {
+          sn,
+          payload: {
+            map: { name: mapName, floor: String(currentMap?.floor || "") },
+          },
+        }
+      )
+    );
+
+  // Cancel task
+  const handleCancelTask = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · Cancelar tareas",
+        "/open-platform-service/v1/cancel_task",
+        {
+          sn,
+          payload: parseJSON(cancelTasksPayload, {}),
+        }
+      )
+    );
+
+  // Estados
+  const handleStatusBySn = () =>
+    run(() =>
+      getWithPopup(
+        "Operaciones · Estado por SN",
+        "/open-platform-service/v1/status/get_by_sn",
+        {
+          sn,
+        }
+      )
+    );
+
+  const handleStatusByGroup = () =>
+    run(() =>
+      getWithPopup(
+        "Operaciones · Estado por grupo",
+        "/open-platform-service/v1/status/get_by_group_id",
+        { group_id: groupId }
+      )
+    );
+
+  // Grupos y robots
+  const handleGroupList = () =>
+    run(() =>
+      getWithPopup(
+        "Operaciones · Grupos vinculados",
+        "/open-platform-service/v1/robot/group/list",
+        {
+          device: device || undefined,
+          shop_id: shopId || undefined,
+        }
+      )
+    );
+
+  const handleRobotsByGroup = () =>
+    run(() =>
+      getWithPopup(
+        "Operaciones · Robots por grupo",
+        "/open-platform-service/v1/robot/list_by_device_and_group",
+        { group_id: robotsGroupId }
+      )
+    );
+
+  // Estado de tarea actual
+  const handleRobotTaskState = () =>
+    run(() =>
+      getWithPopup(
+        "Operaciones · Estado de tarea en ejecución",
+        "/open-platform-service/v1/robot/task/state/get",
+        { sn }
+      )
+    );
+
+  // Tray order
+  const handleTrayOrder = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · Tray order",
+        "/open-platform-service/v1/tray_order",
+        {
+          sn,
+          payload: parseJSON(trayOrderPayload, {}),
+        }
+      )
+    );
+
+  // Agrupación de puntos (map tool)
+  const handlePointGrouping = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · Agrupación de puntos",
+        "/map-service/v1/open/group",
+        {
+          sn,
+          map_name: groupMapName,
+        }
+      )
+    );
+
+  // A2B (errand) + control
+  const handleErrandTask = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · A2B (errand)",
+        "/open-platform-service/v1/task_errand",
+        {
+          sn,
+          payload: parseJSON(errandPayload, {}),
+        }
+      )
+    );
+
+  const handleErrandAction = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · A2B control",
+        "/open-platform-service/v1/errand_action",
+        {
+          sn,
+          payload: {
+            session_id: errandActionSession,
+            action: errandActionType,
+            auth: errandActionAuth || undefined,
+          },
+        }
+      )
+    );
+
+  // Door Capture
+  const handleDoorCapture = () =>
+    run(() =>
+      postWithPopup(
+        "Operaciones · Door Capture",
+        "/biz-open-service/v1/robotDoor/task_list",
+        {
+          pid: doorCapturePid || sn,
+          limit,
+          offset,
+        }
+      )
+    );
+
+  // Tab content
+  return (
+    <>
+      {/* Controles comunes de la pestaña */}
+      <Card className="lg:col-span-12">
+        <h2>Operaciones · Controles comunes</h2>
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+          <div>
+            <label className="block text-sm text-slate-500">sn</label>
+            <input
+              className="input-neu w-full"
+              value={sn}
+              onChange={(e) => setSn(e.target.value)}
+              placeholder="OP..."
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-500">limit</label>
+            <input
+              className="input-neu w-full"
+              value={limit}
+              onChange={(e) =>
+                setLimit(Math.max(0, Number(e.target.value) || 0))
+              }
+              inputMode="numeric"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-500">offset</label>
+            <input
+              className="input-neu w-full"
+              value={offset}
+              onChange={(e) =>
+                setOffset(Math.max(0, Number(e.target.value) || 0))
+              }
+              inputMode="numeric"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-500">
+              need_element (mapa actual)
+            </label>
+            <select
+              className="input-neu w-full"
+              value={needElements}
+              onChange={(e) => setNeedElements(e.target.value === "true")}
+            >
+              <option value="true">true</option>
+              <option value="false">false</option>
+            </select>
+          </div>
+          <div className="flex items-end">
+            <div className="w-full">
+              <Button
+                disabled={busy}
+                onClick={() => setResult(null)}
+                className="w-full"
+              >
+                Limpiar resultado
+              </Button>
+            </div>
+          </div>
+          {busy && (
+            <div className="flex items-end">
+              <div className="w-full">
+                <Button disabled className="w-full">
+                  <Spinner /> Procesando…
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* Mapas */}
+      <Card className="lg:col-span-12">
+        <h2>Mapas y puntos</h2>
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          <div>
+            <Button className="w-full" onClick={handleListMaps} disabled={busy}>
+              Listar mapas
+            </Button>
+          </div>
+          <div>
+            <Button
+              className="w-full"
+              onClick={handleCurrentMap}
+              disabled={busy}
+            >
+              Mapa actual
+            </Button>
+          </div>
+          <div>
+            <Button className="w-full" onClick={handlePoints} disabled={busy}>
+              Puntos (lista)
+            </Button>
+          </div>
+          <div>
+            <label className="block text-sm text-slate-500">
+              map_name (switch/elevador)
+            </label>
+            <input
+              className="input-neu w-full"
+              value={mapName}
+              onChange={(e) => setMapName(e.target.value)}
+            />
+          </div>
+          <div>
+            <Button
+              className="w-full"
+              onClick={handleSwitchInElevator}
+              disabled={busy || !mapName}
+            >
+              Cambiar mapa en ascensor
+            </Button>
+          </div>
+        </div>
+
+        {mapsList.length > 0 &&
+          renderTable(mapsList, [c("name", "name"), c("floor", "floor")])}
+
+        {pointsList.length > 0 &&
+          renderTable(pointsList, [
+            c("name"),
+            c("type"),
+            c("x"),
+            c("y"),
+            c("z"),
+          ])}
+
+        {currentMap && (
+          <div className="mt-3 text-sm text-slate-600">
+            Mapa actual: <b>{currentMap?.name}</b> · piso:{" "}
+            <b>{currentMap?.floor}</b>{" "}
+            {Array.isArray(currentMap?.elements) && (
+              <span>· elementos: {currentMap.elements.length}</span>
+            )}
+          </div>
+        )}
+      </Card>
+
+      {/* Llamadas */}
+      <Card className="lg:col-span-12">
+        <h2>Llamadas (custom_call)</h2>
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+          <div>
+            <label className="block text-sm text-slate-500">
+              call_device_name
+            </label>
+            <input
+              className="input-neu w-full"
+              value={callDeviceName}
+              onChange={(e) => setCallDeviceName(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-500">map_name</label>
+            <input
+              className="input-neu w-full"
+              value={callMapName}
+              onChange={(e) => setCallMapName(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-500">point</label>
+            <input
+              className="input-neu w-full"
+              value={callPoint}
+              onChange={(e) => setCallPoint(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-500">
+              point_type (opcional)
+            </label>
+            <input
+              className="input-neu w-full"
+              value={callPointType}
+              onChange={(e) => setCallPointType(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-500">call_mode</label>
+            <select
+              className="input w-full"
+              value={callMode}
+              onChange={(e) => setCallMode(e.target.value)}
+            >
+              <option value="">(vacío)</option>
+              <option value="IMG">IMG</option>
+              <option value="QR_CODE">QR_CODE</option>
+              <option value="VIDEO">VIDEO</option>
+              <option value="CALL_CONFIRM">CALL_CONFIRM</option>
+              <option value="CALL">CALL</option>
+            </select>
+          </div>
+          <div>
+            <Button className="w-full" onClick={handleCall} disabled={busy}>
+              Llamar
+            </Button>
+          </div>
+        </div>
+        <div className="mt-3 grid grid-cols-1 gap-2">
+          <label className="block text-sm text-slate-500">
+            mode_data (JSON)
+          </label>
+          <textarea
+            className="input-neu w-full h-36"
+            value={modeData}
+            onChange={(e) => setModeData(e.target.value)}
+          />
+        </div>
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div>
+            <label className="block text-sm text-slate-500">task_id</label>
+            <input
+              className="input-neu w-full"
+              value={taskId}
+              onChange={(e) => setTaskId(e.target.value)}
+            />
+          </div>
+          <div>
+            <Button
+              className="w-full"
+              onClick={handleCancelCall}
+              disabled={busy || !taskId}
+            >
+              Cancelar llamada
+            </Button>
+          </div>
+          <div className="lg:col-span-2">
+            <Button
+              className="w-full"
+              onClick={handleCompleteCall}
+              disabled={busy || !taskId}
+            >
+              Completar llamada
+            </Button>
+          </div>
+        </div>
+        <div className="mt-2 grid grid-cols-1 gap-2">
+          <label className="block text-sm text-slate-500">
+            next_call_task (JSON opcional)
+          </label>
+          <textarea
+            className="input-neu w-full h-32"
+            value={nextCallTask}
+            onChange={(e) => setNextCallTask(e.target.value)}
+          />
+        </div>
+      </Card>
+
+      {/* Energía / Puertas / Pantalla / Posición */}
+      <Card className="lg:col-span-12">
+        <h2>Robot · Energía, Puertas, Pantalla y Posición</h2>
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+          <div>
+            <Button
+              className="w-full"
+              onClick={handleRechargeV1}
+              disabled={busy}
+            >
+              Recargar (v1)
+            </Button>
+          </div>
+          <div>
+            <Button
+              className="w-full"
+              onClick={handleRechargeV2}
+              disabled={busy}
+            >
+              Recargar (v2)
+            </Button>
+          </div>
+          <div>
+            <Button
+              className="w-full"
+              onClick={handleDoorState}
+              disabled={busy}
+            >
+              Estado de puertas
+            </Button>
+          </div>
+          <div>
+            <label className="block text-sm text-slate-500">door_number</label>
+            <input
+              className="input-neu w-full"
+              value={doorNumber}
+              onChange={(e) => setDoorNumber(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-500">operation</label>
+            <select
+              className="input w-full"
+              value={doorOp}
+              onChange={(e) => setDoorOp(e.target.value === "true")}
+            >
+              <option value="true">abrir</option>
+              <option value="false">cerrar</option>
+            </select>
+          </div>
+          <div>
+            <Button
+              className="w-full"
+              onClick={handleControlDoors}
+              disabled={busy}
+            >
+              Controlar puerta
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+          <div className="lg:col-span-3">
+            <label className="block text-sm text-slate-500">
+              screen.content
+            </label>
+            <input
+              className="input-neu w-full"
+              value={screenContent}
+              onChange={(e) => setScreenContent(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-500">screen.show</label>
+            <select
+              className="input w-full"
+              value={screenShow}
+              onChange={(e) => setScreenShow(e.target.value === "true")}
+            >
+              <option value="true">true</option>
+              <option value="false">false</option>
+            </select>
+          </div>
+          <div className="lg:col-span-2">
+            <Button
+              className="w-full"
+              onClick={handleScreenSet}
+              disabled={busy}
+            >
+              Actualizar pantalla
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+          <div>
+            <label className="block text-sm text-slate-500">
+              pos.interval (s)
+            </label>
+            <input
+              className="input-neu w-full"
+              value={posInterval}
+              onChange={(e) => setPosInterval(e.target.value)}
+              inputMode="numeric"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-slate-500">pos.times</label>
+            <input
+              className="input-neu w-full"
+              value={posTimes}
+              onChange={(e) => setPosTimes(e.target.value)}
+              inputMode="numeric"
+            />
+          </div>
+          <div className="lg:col-span-2">
+            <Button
+              className="w-full"
+              onClick={handlePositionCmd}
+              disabled={busy}
+            >
+              Enviar comando de posición
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Delivery / Transport */}
+      <Card className="lg:col-span-12">
+        <h2>Delivery / Transport</h2>
+        <div className="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div>
+            <h3 className="text-sm font-medium">delivery_task</h3>
+            <textarea
+              className="input-neu w-full h-40"
+              value={deliveryPayload}
+              onChange={(e) => setDeliveryPayload(e.target.value)}
+            />
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label className="block text-sm text-slate-500">
+                  delivery_action
+                </label>
+                <select
+                  className="input w-full"
+                  value={deliveryAction}
+                  onChange={(e) => setDeliveryAction(e.target.value)}
+                >
+                  <option value="START">START</option>
+                  <option value="COMPLETE">COMPLETE</option>
+                  <option value="CANCEL_ALL_DELIVERY">
+                    CANCEL_ALL_DELIVERY
+                  </option>
+                </select>
+              </div>
+              <div>
+                <Button
+                  className="w-full"
+                  onClick={handleDeliveryTask}
+                  disabled={busy}
+                >
+                  Enviar delivery_task
+                </Button>
+              </div>
+              <div>
+                <Button
+                  className="w-full"
+                  onClick={handleDeliveryAction}
+                  disabled={busy}
+                >
+                  Enviar delivery_action
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-medium">transport_task</h3>
+            <textarea
+              className="input-neu w-full h-40"
+              value={transportPayload}
+              onChange={(e) => setTransportPayload(e.target.value)}
+            />
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label className="block text-sm text-slate-500">
+                  transport_action
+                </label>
+                <select
+                  className="input w-full"
+                  value={transportAction}
+                  onChange={(e) => setTransportAction(e.target.value)}
+                >
+                  <option value="START">START</option>
+                  <option value="COMPLETE">COMPLETE</option>
+                  <option value="CANCEL_ALL_DELIVERY">
+                    CANCEL_ALL_DELIVERY
+                  </option>
+                </select>
+              </div>
+              <div>
+                <Button
+                  className="w-full"
+                  onClick={handleTransportTask}
+                  disabled={busy}
+                >
+                  Enviar transport_task
+                </Button>
+              </div>
+              <div>
+                <Button
+                  className="w-full"
+                  onClick={handleTransportAction}
+                  disabled={busy}
+                >
+                  Enviar transport_action
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* Cancelar tareas / Estado / Grupos / Robots */}
+      <Card className="lg:col-span-12">
+        <h2>Gestión de tareas y estado</h2>
+        <div className="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div>
+            <h3 className="text-sm font-medium">Cancelar tareas</h3>
+            <textarea
+              className="input-neu w-full h-28"
+              value={cancelTasksPayload}
+              onChange={(e) => setCancelTasksPayload(e.target.value)}
+            />
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <Button
+                  className="w-full"
+                  onClick={handleCancelTask}
+                  disabled={busy}
+                >
+                  Cancelar
+                </Button>
+              </div>
+              <div>
+                <Button
+                  className="w-full"
+                  onClick={handleRobotTaskState}
+                  disabled={busy}
+                >
+                  Estado tarea actual
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-medium">Estado / Grupos / Robots</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <Button
+                  className="w-full"
+                  onClick={handleStatusBySn}
+                  disabled={busy}
+                >
+                  Estado por SN
+                </Button>
+              </div>
+              <div>
+                <label className="block text-sm text-slate-500">group_id</label>
+                <input
+                  className="input-neu w-full"
+                  value={groupId}
+                  onChange={(e) => setGroupId(e.target.value)}
+                />
+              </div>
+              <div>
+                <Button
+                  className="w-full"
+                  onClick={handleStatusByGroup}
+                  disabled={busy || !groupId}
+                >
+                  Estado por grupo
+                </Button>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-500">
+                  device (para grupos)
+                </label>
+                <input
+                  className="input-neu w-full"
+                  value={device}
+                  onChange={(e) => setDevice(e.target.value)}
+                  placeholder="device_id"
+                />
+              </div>
+              <div>
+                <Button
+                  className="w-full"
+                  onClick={handleGroupList}
+                  disabled={busy}
+                >
+                  Listar grupos
+                </Button>
+              </div>
+
+              <div>
+                <label className="block text-sm text-slate-500">
+                  group_id (robots)
+                </label>
+                <input
+                  className="input-neu w-full"
+                  value={robotsGroupId}
+                  onChange={(e) => setRobotsGroupId(e.target.value)}
+                />
+              </div>
+              <div>
+                <Button
+                  className="w-full"
+                  onClick={handleRobotsByGroup}
+                  disabled={busy || !robotsGroupId}
+                >
+                  Robots del grupo
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* Tray orders / Agrupación / Door Capture / A2B */}
+      <Card className="lg:col-span-12">
+        <h2>Pedidos a bandejas · Agrupación de puntos · Door Capture · A2B</h2>
+        <div className="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div>
+            <h3 className="text-sm font-medium">Tray order</h3>
+            <textarea
+              className="input-neu w-full h-28"
+              value={trayOrderPayload}
+              onChange={(e) => setTrayOrderPayload(e.target.value)}
+            />
+            <div className="mt-2">
+              <Button
+                className="w-full"
+                onClick={handleTrayOrder}
+                disabled={busy}
+              >
+                Enviar tray_order
+              </Button>
+            </div>
+
+            <div className="mt-4">
+              <h3 className="text-sm font-medium">
+                Agrupación de puntos (map tool)
+              </h3>
+              <label className="block text-sm text-slate-500">map_name</label>
+              <input
+                className="input-neu w-full"
+                value={groupMapName}
+                onChange={(e) => setGroupMapName(e.target.value)}
+              />
+              <div className="mt-2">
+                <Button
+                  className="w-full"
+                  onClick={handlePointGrouping}
+                  disabled={busy || !groupMapName}
+                >
+                  Obtener agrupación
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-medium">Door Capture</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div>
+                <label className="block text-sm text-slate-500">pid (SN)</label>
+                <input
+                  className="input-neu w-full"
+                  value={doorCapturePid}
+                  onChange={(e) => setDoorCapturePid(e.target.value)}
+                  placeholder="por defecto usa SN"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-500">limit</label>
+                <input
+                  className="input-neu w-full"
+                  value={limit}
+                  onChange={(e) => setLimit(Number(e.target.value) || 10)}
+                  inputMode="numeric"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-slate-500">offset</label>
+                <input
+                  className="input-neu w-full"
+                  value={offset}
+                  onChange={(e) => setOffset(Number(e.target.value) || 0)}
+                  inputMode="numeric"
+                />
+              </div>
+              <div className="sm:col-span-3">
+                <Button
+                  className="w-full"
+                  onClick={handleDoorCapture}
+                  disabled={busy}
+                >
+                  Consultar Door Capture
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <h3 className="text-sm font-medium">A2B (errand)</h3>
+              <textarea
+                className="input-neu w-full h-28"
+                value={errandPayload}
+                onChange={(e) => setErrandPayload(e.target.value)}
+              />
+              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <Button
+                    className="w-full"
+                    onClick={handleErrandTask}
+                    disabled={busy}
+                  >
+                    Enviar A2B (task_errand)
+                  </Button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <input
+                    className="input-neu w-full"
+                    placeholder="session_id"
+                    value={errandActionSession}
+                    onChange={(e) => setErrandActionSession(e.target.value)}
+                  />
+                  <select
+                    className="input w-full"
+                    value={errandActionType}
+                    onChange={(e) => setErrandActionType(e.target.value)}
+                  >
+                    <option value="CANCEL">CANCEL</option>
+                    <option value="RETRY">RETRY</option>
+                  </select>
+                  <input
+                    className="input-neu w-full"
+                    placeholder="auth (opcional)"
+                    value={errandActionAuth}
+                    onChange={(e) => setErrandActionAuth(e.target.value)}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <Button
+                    className="w-full"
+                    onClick={handleErrandAction}
+                    disabled={busy || !errandActionSession}
+                  >
+                    Control A2B (errand_action)
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* Panel de resultados */}
+      <Card className="lg:col-span-12">
+        <h2>Resultado</h2>
+        <JsonBlock data={result} />
+      </Card>
+    </>
+  );
+}
+
+/* =========================
+ *  Página
+ * ========================= */
+export default function Apibella() {
+  // Controles comunes
+  const [shopId, setShopId] = useState("");
+  const [startDate, setStartDate] = useState(
+    new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10)
+  );
+  const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10));
+  const [tzOffset, setTzOffset] = useState(getDefaultTzHours());
+  const [adId, setAdId] = useState(""); // opcional, solo afecta módulo Advertising
+
+  // Alertas
+  const [alertState, setAlertState] = useState(null);
+  const showError = (e, title = "Error") => {
+    const msg =
+      e?.response?.data?.message ||
+      e?.response?.data?.code ||
+      e?.message ||
+      String(e);
+    setAlertState({ title, message: msg, variant: "error" });
+  };
+  const showOk = (title, res) => {
+    const msg = res?.message ?? "ok";
+    setAlertState({ title, message: msg, variant: "success" });
+  };
+  async function getWithPopup(title, url, params) {
+    const res = await get(url, params);
+    showOk(title, res);
+    return res;
+  }
+  async function postWithPopup(title, url, body) {
+    const res = await post(url, body);
+    showOk(title, res);
+    return res;
+  }
+
+  // Hooks por módulo (usan misma infraestructura)
+  const delivery = useModule({
+    config: MODULES.delivery,
+    startDate,
+    endDate,
+    tzOffset,
+    shopId,
+    adId,
+    getWithPopup,
+    showError,
+  });
+  const cruise = useModule({
+    config: MODULES.cruise,
+    startDate,
+    endDate,
+    tzOffset,
+    shopId,
+    adId,
+    getWithPopup,
+    showError,
+  });
+  const greeter = useModule({
+    config: MODULES.greeter,
+    startDate,
+    endDate,
+    tzOffset,
+    shopId,
+    adId,
+    getWithPopup,
+    showError,
+  });
+  const interactive = useModule({
+    config: MODULES.interactive,
+    startDate,
+    endDate,
+    tzOffset,
+    shopId,
+    adId,
+    getWithPopup,
+    showError,
+  });
+  const solicit = useModule({
+    config: MODULES.solicit,
+    startDate,
+    endDate,
+    tzOffset,
+    shopId,
+    adId,
+    getWithPopup,
+    showError,
+  });
+  const grid = useModule({
+    config: MODULES.grid,
+    startDate,
+    endDate,
+    tzOffset,
+    shopId,
+    adId,
+    getWithPopup,
+    showError,
+  });
+  const ad = useModule({
+    config: MODULES.ad,
+    startDate,
+    endDate,
+    tzOffset,
+    shopId,
+    adId,
+    getWithPopup,
+    showError,
+  });
+  const recovery = useModule({
+    config: MODULES.recovery,
+    startDate,
+    endDate,
+    tzOffset,
+    shopId,
+    adId,
+    getWithPopup,
+    showError,
+  });
+  const call = useModule({
+    config: MODULES.call,
+    startDate,
+    endDate,
+    tzOffset,
+    shopId,
+    adId,
+    getWithPopup,
+    showError,
+  });
+
+  const tabs = [
+    {
+      key: "delivery",
+      label: "Delivery",
+      module: MODULES.delivery,
+      state: delivery,
+    },
+    { key: "cruise", label: "Cruise", module: MODULES.cruise, state: cruise },
+    {
+      key: "greeter",
+      label: "Greeter",
+      module: MODULES.greeter,
+      state: greeter,
+    },
+    {
+      key: "interactive",
+      label: "Interactive",
+      module: MODULES.interactive,
+      state: interactive,
+    },
+    {
+      key: "solicit",
+      label: "Pick-up",
+      module: MODULES.solicit,
+      state: solicit,
+    },
+    { key: "grid", label: "Grid", module: MODULES.grid, state: grid },
+    { key: "ad", label: "Advertising", module: MODULES.ad, state: ad },
+    {
+      key: "recovery",
+      label: "Recovery",
+      module: MODULES.recovery,
+      state: recovery,
+    },
+    { key: "call", label: "Call", module: MODULES.call, state: call },
+    // Nueva pestaña: Operaciones
+    { key: "ops", label: "Operaciones" },
+  ];
+
+  const [activeTab, setActiveTab] = useState(tabs[0].key);
+  const logicTabs = tabs.filter((t) => t.state); // solo los modulares para el spinner global
+  const anyLoading = logicTabs.some(
+    (t) => t.state.loadingSummary || t.state.loadingList
+  );
+
+  return (
+    <div className="mx-auto w-full max-w-screen-2xl px-3 sm:px-4 md:px-6 py-6 min-h-screen">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6">
+        {/* Encabezado + Controles comunes */}
+        <Card className="lg:col-span-12">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h2 className="min-w-0">
+              Machine task analysis · Distribution line
+            </h2>
+            {anyLoading && <Spinner />}
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-6 gap-3">
+            <div className="min-w-0">
+              <label className="block text-sm text-slate-500">
+                shop_id (opcional)
+              </label>
+              <input
+                className="input-neu w-full"
+                value={shopId}
+                onChange={(e) => setShopId(e.target.value)}
+                placeholder="Ej: 331300000"
+                inputMode="numeric"
+              />
+              <p className="text-xs mt-1">
+                Si lo dejas vacío, consulta global (según permisos).
+              </p>
+            </div>
+            <div className="min-w-0">
+              <label className="block text-sm text-slate-500">Inicio</label>
+              <input
+                type="date"
+                className="input-neu w-full"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
+            </div>
+            <div className="min-w-0">
+              <label className="block text-sm text-slate-500">Fin</label>
+              <input
+                type="date"
+                className="input-neu w-full"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+              />
+            </div>
+            <div className="min-w-0">
+              <label className="block text-sm text-slate-500">
+                timezone_offset (h)
+              </label>
+              <input
+                className="input-neu w-full"
+                value={tzOffset}
+                onChange={(e) => setTzOffset(e.target.value)}
+                placeholder="Ej: 8 para UTC+8"
+                inputMode="numeric"
+              />
+              <p className="text-xs mt-1">
+                Rango: -12 a 14. Por defecto: tu zona.
+              </p>
+            </div>
+            <div className="min-w-0">
+              <label className="block text-sm text-slate-500">
+                ad_id (opcional)
+              </label>
+              <input
+                className="input-neu w-full"
+                value={adId}
+                onChange={(e) => setAdId(e.target.value)}
+                placeholder="Ej: 123"
+                inputMode="numeric"
+              />
+              <p className="text-xs mt-1">Filtra endpoints de publicidad.</p>
+            </div>
+          </div>
+        </Card>
+
+        {/* NAV DE PESTAÑAS */}
+        <Card className="lg:col-span-12 sticky top-0 z-10">
+          <TabsNav tabs={tabs} activeKey={activeTab} onChange={setActiveTab} />
+        </Card>
+
+        {/* PANELES (contenido por pestaña) */}
+        {tabs.map((t) => (
+          <TabPanel key={t.key} tabKey={t.key} activeKey={activeTab}>
+            {t.key !== "ops" ? (
+              <>
+                <SummarySection
+                  title={t.module.summaryTitle}
+                  module={t.module}
+                  state={t.state}
+                />
+                <ListSection
+                  title={t.module.listTitle}
+                  module={t.module}
+                  state={t.state}
+                />
+              </>
+            ) : (
+              <OperationsTab
+                getWithPopup={getWithPopup}
+                postWithPopup={postWithPopup}
+                showError={showError}
+                shopId={shopId}
+              />
+            )}
+          </TabPanel>
+        ))}
+      </div>
+
+      {/* Modal de alertas */}
       <NeumorphicModal
         open={!!alertState}
         title={alertState?.title}
         confirmText="Cerrar"
         hideCancel
-        variant={alertState?.variant || "error"}  // usa success/warning/error
+        variant={alertState?.variant || "error"}
         onConfirm={() => setAlertState(null)}
         onCancel={() => setAlertState(null)}
         solidBackdrop
       >
-        <div className="whitespace-pre-wrap break-words">{alertState?.message}</div>
+        <div className="whitespace-pre-wrap break-words">
+          {alertState?.message}
+        </div>
       </NeumorphicModal>
     </div>
   );
