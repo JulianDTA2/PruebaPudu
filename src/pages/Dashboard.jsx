@@ -1,17 +1,32 @@
 import { useEffect, useMemo, useState, useRef, useCallback, memo } from "react";
-import { useNavigate } from "react-router-dom"; // agregado
+import { useNavigate } from "react-router-dom";
 import { Card } from "../components/Card";
 import Stat from "../components/Stat";
 import Button from "../components/Button";
 import { usePolling } from "../hooks/usePolling";
 import { Pudu, get } from "../services/api";
 
-/* ----------------------------- UI helpers ----------------------------- */
 function Spinner({ className = "" }) {
   return (
-    <svg className={`animate-spin h-4 w-4 ${className}`} viewBox="0 0 24 24" aria-hidden="true">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4A4 4 0 008 12H4z" />
+    <svg
+      className={`animate-spin h-4 w-4 ${className}`}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+        fill="none"
+      />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8v4A4 4 0 008 12H4z"
+      />
     </svg>
   );
 }
@@ -23,34 +38,51 @@ function formatLatency(ms) {
 
 /** Mapeo de imágenes por producto normalizado */
 const PRODUCT_IMAGES = {
-  bellabot: "https://cdn.pudutech.com/website/images/pc/bellabot/parameter2.2.0.png",
+  bellabot:
+    "https://cdn.pudutech.com/website/images/pc/bellabot/parameter2.2.0.png",
   cc1: "https://cdn.pudutech.com/website/images/cc1/parameters_robot_en.png",
-  "bellabot pro": "https://cdn.pudutech.com/official-website/bellabotpro/S13_1.png",
-  flashbot: "https://cdn.pudutech.com/official-website/flashbot_new/s16-tuya.webp",
+  "bellabot pro":
+    "https://cdn.pudutech.com/official-website/bellabotpro/S13_1.png",
+  flashbot:
+    "https://cdn.pudutech.com/official-website/flashbot_new/s16-tuya.webp",
 };
 
 /** Normaliza el nombre/código del producto para matchear el mapeo */
 function normalizeProductName(raw) {
   if (!raw) return null;
-  const s = String(raw).toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  const s = String(raw)
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
   // matches directos
   if (s === "bellabot" || s === "bella bot" || s === "bella") return "bellabot";
-  if (s === "bellabot pro" || s === "bella bot pro" || s === "bellapro" || s === "bellabotpro") return "bellabot pro";
+  if (
+    s === "bellabot pro" ||
+    s === "bella bot pro" ||
+    s === "bellapro" ||
+    s === "bellabotpro"
+  )
+    return "bellabot pro";
   if (s === "cc1") return "cc1";
   if (s === "flashbot" || s === "flash bot") return "flashbot";
 
   // heurísticas por inclusión
-  if (s.includes("bellabot pro") || (s.includes("bella") && s.includes("pro"))) return "bellabot pro";
-  if (s.includes("bellabot") || s.includes("bella bot") || s === "bella") return "bellabot";
+  if (s.includes("bellabot pro") || (s.includes("bella") && s.includes("pro")))
+    return "bellabot pro";
+  if (s.includes("bellabot") || s.includes("bella bot") || s === "bella")
+    return "bellabot";
   if (s.includes("flash")) return "flashbot";
   if (s.includes("cc1")) return "cc1";
 
   return null;
 }
 
-/* ------------------------- Subcomponente contador ------------------------- */
-/** Evita re-renderizar todo el dashboard cada segundo */
+// Helper: identifica robots de delivery (BellaBot / BellaBot Pro)
+const isDeliveryKey = (k) =>
+  k === "bellabot" || k === "bellabot pro" || k === "flashbot";
+
 const Countdown = memo(function Countdown({ enabled, pollMs, ts }) {
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -66,12 +98,14 @@ const Countdown = memo(function Countdown({ enabled, pollMs, ts }) {
   }, [enabled, pollMs, ts, tick]);
 
   if (!enabled || nextRefresh == null) return null;
-  return <div className="text-xs text-foreground/60">Próx. actualización en: {nextRefresh}s</div>;
+  return (
+    <div className="text-xs text-foreground/60">
+      Próx. actualización en: {nextRefresh}s
+    </div>
+  );
 });
 
-/* --------------------------------- Vista --------------------------------- */
 export default function Dashboard() {
-  // para navegar a /admin/apicc cuando el robot sea CC1
   const navigate = useNavigate();
 
   // --- Controles ---
@@ -97,7 +131,10 @@ export default function Dashboard() {
       try {
         setShopsLoading(true);
         setShopsErr(null);
-        const res = await get("/data-open-platform-service/v1/api/shop", { limit: 100, offset: 0 });
+        const res = await get("/data-open-platform-service/v1/api/shop", {
+          limit: 100,
+          offset: 0,
+        });
         const list = res?.data?.list || res?.list || [];
         setShops(list);
         if (!shopId && list.length) {
@@ -106,7 +143,9 @@ export default function Dashboard() {
           shopIdRef.current = first;
         }
       } catch (e) {
-        setShopsErr(e?.response?.data || e?.message || "Error cargando tiendas");
+        setShopsErr(
+          e?.response?.data || e?.message || "Error cargando tiendas"
+        );
       } finally {
         setShopsLoading(false);
       }
@@ -139,12 +178,7 @@ export default function Dashboard() {
           r?.type ??
           "-";
         const sn =
-          r?.sn ??
-          r?.device_sn ??
-          r?.robot_sn ??
-          r?.serial ??
-          r?.id ??
-          "-";
+          r?.sn ?? r?.device_sn ?? r?.robot_sn ?? r?.serial ?? r?.id ?? "-";
         const productKey = normalizeProductName(productRaw);
         const img = productKey ? PRODUCT_IMAGES[productKey] : null;
         const label = `${productRaw} - ${sn}`;
@@ -190,7 +224,7 @@ export default function Dashboard() {
 
   const { data, loading, refetch } = usePolling(pollFn, {
     interval: pollMs, // 5 min por defecto (respetado)
-    enabled,          // polling activo si pollMs > 0
+    enabled, // polling activo si pollMs > 0
   });
 
   const online = data?.online ?? false;
@@ -217,7 +251,8 @@ export default function Dashboard() {
           <div className="min-w-0">
             <h2 className="text-xl font-semibold">Estado API</h2>
             <p className="text-sm text-foreground/60">
-              Tienda actual: <span className="font-medium break-all">{shopId}</span>
+              Tienda actual:{" "}
+              <span className="font-medium break-all">{shopId}</span>
             </p>
           </div>
 
@@ -244,8 +279,12 @@ export default function Dashboard() {
               onChange={handleShopChange}
               title="Selecciona tienda"
             >
-              {shopsLoading && <option value={shopId}>Cargando tiendas…</option>}
-              {!shopsLoading && shops.length === 0 && <option value={shopId}>— sin tiendas —</option>}
+              {shopsLoading && (
+                <option value={shopId}>Cargando tiendas…</option>
+              )}
+              {!shopsLoading && shops.length === 0 && (
+                <option value={shopId}>— sin tiendas —</option>
+              )}
               {!shopsLoading &&
                 shops.map((s) => {
                   const id = String(s.shop_id ?? s.id ?? "");
@@ -269,7 +308,12 @@ export default function Dashboard() {
         {/* Stats + lista de robots */}
         <section className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4 items-start mt-6">
           <div aria-live="polite" className="min-w-0">
-            <Stat label="API" value={loading ? "Cargando…" : online ? "🟢 Online" : "🔴 Offline"} />
+            <Stat
+              label="API"
+              value={
+                loading ? "Cargando…" : online ? "🟢 Online" : "🔴 Offline"
+              }
+            />
             {updatedAt && (
               <div className="text-xs text-foreground/60 mt-1">
                 Última actualización: {updatedAt.toLocaleTimeString()}
@@ -287,7 +331,11 @@ export default function Dashboard() {
           </div>
 
           <div className="min-w-0 flex sm:justify-end">
-            <Button onClick={refetch} className="min-w-[140px]" disabled={loading}>
+            <Button
+              onClick={refetch}
+              className="min-w-[140px]"
+              disabled={loading}
+            >
               {loading ? (
                 <span className="inline-flex items-center gap-2">
                   <Spinner /> Actualizando…
@@ -307,26 +355,45 @@ export default function Dashboard() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                   {robots.map((rb, i) => {
                     const isCC1 = rb.productKey === "cc1";
+                    const isDelivery = isDeliveryKey(rb.productKey);
+
+                    // destino de navegación
+                    const navTarget = isCC1
+                      ? "/admin/apicc"
+                      : isDelivery
+                      ? `/admin/apibella`
+                      : null;
+
                     return (
                       <figure
                         key={`${rb.productKey || "x"}-${rb.sn || i}`}
-                        className={`bg-card/60 rounded-xl p-2 flex flex-col items-center text-center ${isCC1 ? "cursor-pointer" : ""}`}
+                        className={`bg-card/60 rounded-xl p-2 flex flex-col items-center text-center ${
+                          navTarget ? "cursor-pointer" : ""
+                        }`}
                         title={rb.label}
-                        //  si es CC1 → navegar a /admin/apicc
-                        onClick={() => { if (isCC1) navigate("/admin/apicc"); }}
-                        tabIndex={isCC1 ? 0 : -1}
-                        role={isCC1 ? "button" : undefined}
+                        onClick={() => {
+                          if (navTarget) navigate(navTarget);
+                        }}
+                        tabIndex={navTarget ? 0 : -1}
+                        role={navTarget ? "button" : undefined}
                         onKeyDown={(e) => {
-                          if (isCC1 && (e.key === "Enter" || e.key === " ")) {
+                          if (
+                            navTarget &&
+                            (e.key === "Enter" || e.key === " ")
+                          ) {
                             e.preventDefault();
-                            navigate("/admin/apicc");
+                            navigate(navTarget);
                           }
                         }}
                       >
                         {rb.img ? (
                           <img
                             src={rb.img}
-                            alt={rb.productKey ? `Imagen de ${rb.productKey}` : `Imagen de ${rb.productRaw}`}
+                            alt={
+                              rb.productKey
+                                ? `Imagen de ${rb.productKey}`
+                                : `Imagen de ${rb.productRaw}`
+                            }
                             className="w-full h-24 object-contain select-none"
                             loading="lazy"
                             onError={(ev) => {
@@ -339,8 +406,12 @@ export default function Dashboard() {
                           </div>
                         )}
                         <figcaption className="mt-2 text-xs break-words">
-                          <div className="font-medium">{rb.productRaw || "—"}</div>
-                          <div className="text-foreground/60">{rb.sn || "—"}</div>
+                          <div className="font-medium">
+                            {rb.productRaw || "—"}
+                          </div>
+                          <div className="text-foreground/60">
+                            {rb.sn || "—"}
+                          </div>
                         </figcaption>
                       </figure>
                     );
@@ -348,7 +419,9 @@ export default function Dashboard() {
                 </div>
               </div>
             ) : (
-              <div className="text-xs text-foreground/60">No hay robots para esta tienda.</div>
+              <div className="text-xs text-foreground/60">
+                No hay robots para esta tienda.
+              </div>
             )}
           </div>
 
@@ -356,7 +429,9 @@ export default function Dashboard() {
             <div className="card-response sm:col-span-2 lg:col-span-4">
               <strong>Detalle:</strong>
               <pre className="mt-2 whitespace-pre-wrap break-words">
-                {typeof data.errMsg === "string" ? data.errMsg : JSON.stringify(data.errMsg, null, 2)}
+                {typeof data.errMsg === "string"
+                  ? data.errMsg
+                  : JSON.stringify(data.errMsg, null, 2)}
               </pre>
             </div>
           )}

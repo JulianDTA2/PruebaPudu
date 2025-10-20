@@ -1,14 +1,46 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Card } from "../components/Card.jsx";
 import Button from "../components/Button.jsx";
 import NeumorphicModal from "../components/NeumorphicModal.jsx";
-import { get, post } from "../services/api.js";
+import { Pudu, get, post } from "../services/api.js";
+import JsonView from "../components/JsonView";
 
-/**
- * =========================
- *  Utilidades compartidas
- * =========================
- */
+const PRODUCT_IMAGES = {
+  bellabot:
+    "https://cdn.pudutech.com/website/images/pc/bellabot/parameter2.2.0.png",
+  cc1: "https://cdn.pudutech.com/website/images/cc1/parameters_robot_en.png",
+  "bellabot pro":
+    "https://cdn.pudutech.com/official-website/bellabotpro/S13_1.png",
+  flashbot:
+    "https://cdn.pudutech.com/official-website/flashbot_new/s16-tuya.webp",
+};
+
+function normalizeProductName(raw) {
+  if (!raw) return null;
+  const s = String(raw)
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (s === "bellabot" || s === "bella bot" || s === "bella") return "bellabot";
+  if (
+    s === "bellabot pro" ||
+    s === "bella bot pro" ||
+    s === "bellapro" ||
+    s === "bellabotpro"
+  )
+    return "bellabot pro";
+  if (s === "cc1") return "cc1";
+  if (s === "flashbot" || s === "flash bot") return "flashbot";
+  if (s.includes("bellabot pro") || (s.includes("bella") && s.includes("pro")))
+    return "bellabot pro";
+  if (s.includes("bellabot") || s.includes("bella bot") || s === "bella")
+    return "bellabot";
+  if (s.includes("flash")) return "flashbot";
+  if (s.includes("cc1")) return "cc1";
+  return null;
+}
+
 const toUnixSec = (d) => Math.floor(new Date(d).getTime() / 1000);
 const diffDays = (a, b) =>
   Math.max(0, Math.round((toUnixSec(b) - toUnixSec(a)) / 86400));
@@ -47,23 +79,33 @@ function Spinner({ className = "" }) {
   );
 }
 
+// Tabla 100% responsive: scroll horizontal en móvil, thead oculto en móvil con mini-headers por celda
 const renderTable = (rows, columns) => (
   <div className="mt-3 overflow-x-auto">
-    <table className="min-w-full">
-      <thead>
+    <table className="min-w-max w-full">
+      <thead className="hidden md:table-header-group">
         <tr>
           {columns.map((col) => (
-            <th key={col.key}>{col.label}</th>
+            <th
+              key={col.key}
+              className="px-3 py-2 text-left text-xs font-semibold text-slate-600 whitespace-nowrap"
+            >
+              {col.label}
+            </th>
           ))}
         </tr>
       </thead>
       <tbody>
         {rows.map((r, i) => (
-          <tr key={i}>
+          <tr key={i} className="border-b last:border-0">
             {columns.map((col) => (
-              <td key={col.key}>
-                <span className="cell-header">{col.key}</span>
-                {col.render ? col.render(r) : r[col.key] ?? 0}
+              <td key={col.key} className="px-3 py-2 align-top text-sm">
+                <span className="block md:hidden text-[10px] uppercase tracking-wide text-slate-400 mb-1">
+                  {col.label}
+                </span>
+                <div className="whitespace-nowrap md:whitespace-normal">
+                  {col.render ? col.render(r) : r[col.key] ?? 0}
+                </div>
               </td>
             ))}
           </tr>
@@ -73,15 +115,9 @@ const renderTable = (rows, columns) => (
   </div>
 );
 
-/**
- * =========================
- *  Configuración por módulo
- * =========================
- *  Cada módulo define:
- *  - rutas
- *  - cómo construir KPIs
- *  - columnas de tablas (summary / qoq / list por robot|shop)
- */
+// =========================
+//  Configuración por módulo
+// =========================
 const MODULES = {
   delivery: {
     key: "delivery",
@@ -701,11 +737,9 @@ const MODULES = {
   },
 };
 
-/**
- * =========================
- *  Hook reutilizable por módulo
- * =========================
- */
+// =========================
+//  Hook reutilizable por módulo
+// =========================
 function useModule({
   config,
   startDate,
@@ -816,11 +850,9 @@ function useModule({
   };
 }
 
-/**
- * =========================
- *  Secciones UI reutilizables (100% responsive)
- * =========================
- */
+// =========================
+//  Secciones UI: Summary / List
+// =========================
 function SummarySection({ title, module, state }) {
   const {
     timeUnit,
@@ -852,7 +884,6 @@ function SummarySection({ title, module, state }) {
           <p className="text-xs mt-1">auto: por día si &gt; 24h.</p>
         </div>
         <div className="md:col-span-4">
-          {/* Botones con su propio espacio siempre */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
               <Button
@@ -979,7 +1010,6 @@ function ListSection({ title, module, state }) {
           />
         </div>
 
-        {/* Bloque de acciones y estado - cada botón con su propio espacio */}
         <div className="lg:col-span-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 items-stretch">
             <div>
@@ -1037,11 +1067,6 @@ function ListSection({ title, module, state }) {
   );
 }
 
-/**
- * =========================
- *  Tabs (solo UI) · 100% responsive
- * =========================
- */
 function TabsNav({ tabs, activeKey, onChange }) {
   const handleKeyDown = (e) => {
     const idx = tabs.findIndex((t) => t.key === activeKey);
@@ -1125,6 +1150,73 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
+
+  // ---- Selector de robots (SN) ----
+  const [robotsLoading, setRobotsLoading] = useState(false);
+  const [robotsErr, setRobotsErr] = useState(null);
+  const [robots, setRobots] = useState([]);
+  const [manualSnMode, setManualSnMode] = useState(false);
+
+  async function loadRobots() {
+    try {
+      setRobotsLoading(true);
+      setRobotsErr(null);
+      setRobots([]);
+      const res = await Pudu.getRobots({ shop_id: shopId || undefined });
+
+      const list =
+        res?.data?.list ??
+        res?.list ??
+        res?.data?.data?.list ??
+        (Array.isArray(res) ? res : []);
+
+      const mapped = (Array.isArray(list) ? list : []).map((r) => {
+        const productRaw =
+          r?.product_code ??
+          r?.product ??
+          r?.productCode ??
+          r?.productType ??
+          r?.type ??
+          "-";
+        const snVal =
+          r?.sn ?? r?.device_sn ?? r?.robot_sn ?? r?.serial ?? r?.id ?? "-";
+        const productKey = normalizeProductName(productRaw);
+        const img = productKey ? PRODUCT_IMAGES[productKey] : null;
+        return {
+          productRaw,
+          productKey,
+          sn: snVal,
+          img,
+          label: `${productRaw} - ${snVal}`,
+        };
+      });
+
+      const seen = new Set();
+      const unique = mapped.filter((it) => {
+        const key = `${it.productKey || "x"}::${it.sn || it.label}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      setRobots(unique);
+
+      // autoseleccionar si hay solo uno
+      if (unique.length === 1) {
+        setManualSnMode(false);
+        setSn(unique[0].sn);
+      }
+    } catch (e) {
+      setRobotsErr(e?.response?.data || e?.message || String(e));
+    } finally {
+      setRobotsLoading(false);
+    }
+  }
+
+  // recargar lista al cambiar shopId
+  useEffect(() => {
+    loadRobots();
+  }, [shopId]);
 
   // Mapas / puntos
   const [mapName, setMapName] = useState("");
@@ -1668,15 +1760,75 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       <Card className="lg:col-span-12">
         <h2>Operaciones · Controles comunes</h2>
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-          <div>
-            <label className="block text-sm text-slate-500">sn</label>
-            <input
-              className="input-neu w-full"
-              value={sn}
-              onChange={(e) => setSn(e.target.value)}
-              placeholder="OP..."
-            />
+          <div className="min-w-0">
+            <label className="block text-sm text-slate-500">sn (robot)</label>
+            <div className="flex flex-wrap gap-2">
+              <select
+                className="input-neu w-full sm:flex-1"
+                value={
+                  manualSnMode
+                    ? "__manual__"
+                    : robots.find((r) => r.sn === sn)
+                    ? sn
+                    : ""
+                }
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "__manual__") {
+                    setManualSnMode(true);
+                  } else {
+                    setManualSnMode(false);
+                    setSn(v);
+                  }
+                }}
+                title="Selecciona un robot por SN"
+              >
+                <option value="">— seleccionar SN —</option>
+                {robots.map((r) => (
+                  <option key={r.sn} value={r.sn}>
+                    {r.sn} · {r.productRaw}
+                  </option>
+                ))}
+                <option value="__manual__">Escribir SN</option>
+              </select>
+
+              <Button
+                onClick={loadRobots}
+                disabled={robotsLoading}
+                className="w-full sm:w-auto"
+              >
+                {robotsLoading ? (
+                  <>
+                    <Spinner /> Actualizando…
+                  </>
+                ) : (
+                  "Actualizar lista"
+                )}
+              </Button>
+            </div>
+
+            {robotsErr && (
+              <div className="text-xs text-red-600 mt-1">
+                {String(robotsErr)}
+              </div>
+            )}
+
+            {manualSnMode && (
+              <input
+                className="input-neu w-full mt-2"
+                value={sn}
+                onChange={(e) => setSn(e.target.value)}
+                placeholder="OP..."
+              />
+            )}
+
+            {!robotsLoading && !robotsErr && !!robots.length && (
+              <div className="text-xs text-foreground/60 mt-1">
+                {robots.length} robot(s) disponibles para seleccionar.
+              </div>
+            )}
           </div>
+
           <div>
             <label className="block text-sm text-slate-500">limit</label>
             <input
@@ -2385,15 +2537,12 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       {/* Panel de resultados */}
       <Card className="lg:col-span-12">
         <h2>Resultado</h2>
-        <JsonBlock data={result} />
+        <JsonView className="card-response" data={result} />
       </Card>
     </>
   );
 }
 
-/* =========================
- *  Página
- * ========================= */
 export default function Apibella() {
   // Controles comunes
   const [shopId, setShopId] = useState("");
