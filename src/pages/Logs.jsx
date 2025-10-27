@@ -1,8 +1,17 @@
+// src/pages/Logs.jsx (MQTT only)
 import React, { useEffect, useState, useRef, useMemo } from "react";
 import { Card } from "../components/Card";
 import Button from "../components/Button";
 import JsonView from "../components/JsonView";
 import { get } from "../services/api";
+
+// === MQTT loader (dinámico) ===
+// Evita problemas de export en Vite al importar 'mqtt' (UMD/ESM)
+async function loadMqttConnect() {
+  const mod = await import(/* @vite-ignore */ "mqtt");
+  const connectFn = mod?.connect || mod?.default?.connect;
+  return connectFn;
+}
 
 function toUnixSeconds(d) {
   return Math.floor(new Date(d).getTime() / 1000);
@@ -38,10 +47,9 @@ const DEFAULT_TZ_OFFSET = 8; // hours
 const DEFAULT_OFFSET = 0;
 const DEFAULT_LIMIT = 10;
 
-// ===== Defaults Cam =====
-const DEFAULT_CAM_BASE = "http://192.168.68.169";
-const STREAM_PORT = 81; // stream fijo del firmware
-const STREAM_FPS = 15; // fps para dibujar/recordar
+// ===== MQTT video =====
+const MQTT_PLAYBACK_FPS = 12; // fps de reproducción del canvas MQTT
+const MQTT_REQUEST_FPS_DEFAULT = 6; // fps del modo pull enviando 'snap'
 
 export default function Logs() {
   // --- Filtros visibles (Logs) ---
@@ -163,46 +171,58 @@ export default function Logs() {
     fetchList(v);
   }
 
-  const [camBase, setCamBase] = useState(DEFAULT_CAM_BASE);
-
-  const streamUrl = useMemo(() => {
-    try {
-      const u = new URL(camBase);
-      return `${u.protocol}//${u.hostname}:${STREAM_PORT}/stream`;
-    } catch {
-      const base = camBase.replace(/\/$/, "");
-      const host = base.replace(/^(\w+:\/\/)/, "").replace(/:\d+$/, "");
-      const proto = base.startsWith("https://") ? "https://" : "http://";
-      return `${proto}${host}:${STREAM_PORT}/stream`;
-    }
-  }, [camBase]);
-
-  const camUrl = (p) => `${camBase.replace(/\/$/, "")}${p}`;
-
-  const [camLoading, setCamLoading] = useState(false);
-  const [camError, setCamError] = useState(null);
-  const [camStatus, setCamStatus] = useState(null);
-
-  const [streamOn, setStreamOn] = useState(false);
-
-  const imgRef = useRef(null); // fuente MJPEG
-  const canvasRef = useRef(null); // display y grabación
-  const drawTimerRef = useRef(null);
-
+  // ===== Captura (para mostrar/guardar última foto que llegue por MQTT) =====
   const [snapshotUrl, setSnapshotUrl] = useState(null);
   const snapshotBlobRef = useRef(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const mediaRecorderRef = useRef(null);
-  const recordedChunksRef = useRef([]);
-  const lastVideoBlobRef = useRef(null);
 
-  const isMixedBlocked =
-    typeof window !== "undefined" &&
-    window.location?.protocol === "https:" &&
-    camBase.startsWith("http:");
+  // ===== MQTT (WSS) =====
+  const [mqttUrl, setMqttUrl] = useState("wss://test.mosquitto.org:8081/mqtt");
+  const [deviceId, setDeviceId] = useState("A7C0E8FC"); // tu ID
+  const baseTopic = useMemo(
+    () => `pudurobotics/devices/${deviceId}`,
+    [deviceId]
+  );
+  const topicCmd = `${baseTopic}/cmd`;
+  const topicAll = `${baseTopic}/#`;
 
-  function resizeCanvasToBox() {
-    const canvas = canvasRef.current;
+  const mqttClientRef = useRef(null);
+  const [mqttState, setMqttState] = useState("desconectado");
+  const [mqttErr, setMqttErr] = useState(null);
+  const [lastMqttMsg, setLastMqttMsg] = useState(null);
+
+  // Canvas / Playback (MQTT video)
+  const mqttCanvasRef = useRef(null);
+  const mqttTimerRef = useRef(null);
+  const mqttQueueRef = useRef([]); // cola de ImageBitmap/HTMLImageElement
+  const mqttPlayingRef = useRef(false);
+
+  // Grabación (MQTT video)
+  const [isRecordingMqtt, setIsRecordingMqtt] = useState(false);
+  const mqttMediaRecorderRef = useRef(null);
+  const mqttChunksRef = useRef([]);
+  const mqttVideoBlobRef = useRef(null);
+
+  const [mqttStreamOn, setMqttStreamOn] = useState(false); // UI local
+
+  // Modo pull (envía 'snap' en bucle si el firmware no hace push de frames)
+  const [mqttPullMode, setMqttPullMode] = useState(true);
+  const [mqttRequestFps, setMqttRequestFps] = useState(
+    MQTT_REQUEST_FPS_DEFAULT
+  );
+  const mqttSnapIntervalRef = useRef(null);
+
+  function base64ToBlob(b64, mime = "image/jpeg") {
+    try {
+      const bin = atob(b64);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      return new Blob([arr], { type: mime });
+    } catch {
+      return null;
+    }
+  }
+
+  function resizeCanvasBox(canvas) {
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const w = Math.max(1, Math.floor(rect.width));
@@ -213,130 +233,229 @@ export default function Logs() {
     }
   }
 
-  function drawFrame() {
-    const canvas = canvasRef.current;
-    const img = imgRef.current;
-    if (!canvas || !img) return;
-    const ctx = canvas.getContext("2d");
-    resizeCanvasToBox();
-    try {
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    } catch {
-      // si aún no hay frame, ignorar
-    }
+  function scheduleNextMqttFrame() {
+    clearTimeout(mqttTimerRef.current);
+    mqttTimerRef.current = setTimeout(
+      drawNextMqttFrame,
+      1000 / MQTT_PLAYBACK_FPS
+    );
   }
 
-  function startDrawingLoop() {
-    stopDrawingLoop();
-    drawTimerRef.current = setInterval(drawFrame, 1000 / STREAM_FPS);
-  }
-  function stopDrawingLoop() {
-    if (drawTimerRef.current) {
-      clearInterval(drawTimerRef.current);
-      drawTimerRef.current = null;
-    }
-  }
-
-  function startStream() {
-    setCamError(null);
-    setStreamOn(true);
-    const im = imgRef.current;
-    if (im) {
-      im.crossOrigin = "anonymous"; // para permitir dibujo en canvas
-      im.src = streamUrl + `?t=${Date.now()}`; // cache-bust
-      im.onload = () => drawFrame();
-    }
-    startDrawingLoop();
-  }
-
-  function stopStream() {
-    setStreamOn(false);
-    stopDrawingLoop();
-    const im = imgRef.current;
-    if (im) im.src = "";
-  }
-
-  async function fetchCamStatus() {
-    try {
-      setCamLoading(true);
-      setCamError(null);
-      setCamStatus(null);
-      const res = await fetch(camUrl("/status"), { method: "GET" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      setCamStatus(json);
-    } catch (e) {
-      setCamError(e.message || String(e));
-    } finally {
-      setCamLoading(false);
-    }
-  }
-
-  async function takeSnapshot() {
-    setCamError(null);
-    // si el stream está activo, captura desde el canvas
-    if (streamOn && canvasRef.current) {
-      await new Promise((r) => setTimeout(r, 50));
-      const blob = await new Promise((resolve) => {
-        // fallback para navegadores sin toBlob
-        if (!canvasRef.current.toBlob) {
-          try {
-            const dataUrl = canvasRef.current.toDataURL("image/jpeg", 0.92);
-            const b = atob(dataUrl.split(",")[1]);
-            const arr = new Uint8Array(b.length);
-            for (let i = 0; i < b.length; i++) arr[i] = b.charCodeAt(i);
-            return resolve(new Blob([arr], { type: "image/jpeg" }));
-          } catch {
-            return resolve(null);
-          }
-        }
-        canvasRef.current.toBlob((b) => resolve(b), "image/jpeg", 0.92);
-      });
-      if (blob) {
-        snapshotBlobRef.current = blob;
-        setSnapshotUrl(URL.createObjectURL(blob));
-      } else {
-        setCamError("No se pudo generar la captura desde el canvas.");
-      }
+  function drawNextMqttFrame() {
+    const canvas = mqttCanvasRef.current;
+    if (!canvas) {
+      mqttPlayingRef.current = false;
       return;
     }
-    // si no hay stream, usa /capture del firmware
+    const ctx = canvas.getContext("2d");
+    const frame = mqttQueueRef.current.shift();
+    if (!frame) {
+      mqttPlayingRef.current = false;
+      return;
+    }
+    resizeCanvasBox(canvas);
     try {
-      const u = camUrl(`/capture?t=${Date.now()}`);
-      const res = await fetch(u);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      snapshotBlobRef.current = blob;
-      setSnapshotUrl(URL.createObjectURL(blob));
-    } catch (e) {
-      setCamError(e.message || String(e));
+      ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+    } catch {}
+    if (frame.close) {
+      try {
+        frame.close();
+      } catch {}
+    }
+    if (mqttQueueRef.current.length > 0) {
+      scheduleNextMqttFrame();
+    } else {
+      mqttPlayingRef.current = false;
     }
   }
 
-  async function camControl(varName, val) {
+  async function enqueueMqttFrameFromB64(b64) {
+    const blob = base64ToBlob(b64, "image/jpeg");
+    if (!blob) return;
+
+    let frameObj = null;
     try {
-      setCamError(null);
-      const url = camUrl(
-        `/control?var=${encodeURIComponent(varName)}&val=${encodeURIComponent(
-          val
-        )}`
-      );
-      const r = await fetch(url, { method: "GET" });
-      if (!r.ok)
-        throw new Error(`Control ${varName}=${val} → HTTP ${r.status}`);
-    } catch (e) {
-      setCamError(e.message || String(e));
+      frameObj = await createImageBitmap(blob);
+    } catch {
+      frameObj = await new Promise((resolve) => {
+        const img = new Image();
+        const url = URL.createObjectURL(blob);
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          resolve(img);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          resolve(null);
+        };
+        img.src = url;
+      });
+    }
+    if (!frameObj) return;
+
+    // limitar cola (drop oldest) para evitar lag
+    if (mqttQueueRef.current.length > 6) {
+      const old = mqttQueueRef.current.shift();
+      if (old && old.close) {
+        try {
+          old.close();
+        } catch {}
+      }
+    }
+    mqttQueueRef.current.push(frameObj);
+
+    if (!mqttPlayingRef.current) {
+      mqttPlayingRef.current = true;
+      drawNextMqttFrame();
     }
   }
 
-  function startRecording() {
-    if (!canvasRef.current) return;
-    setCamError(null);
+  async function connectMqtt() {
+    setMqttErr(null);
+    try {
+      const mqttConnect = await loadMqttConnect();
+      if (!mqttConnect) {
+        setMqttErr("No se encontró mqtt.connect. Instala 'npm i mqtt' (v5+).");
+        return;
+      }
+      const clientId = `web-${Math.random().toString(16).slice(2)}`;
+      const c = mqttConnect(mqttUrl, {
+        clean: true,
+        keepalive: 30,
+        connectTimeout: 4000,
+        clientId,
+      });
+      mqttClientRef.current = c;
+      setMqttState("conectando…");
+
+      c.on("connect", () => {
+        setMqttState("conectado");
+        c.subscribe(topicAll, { qos: 0 }, (err) => {
+          if (err) setMqttErr(String(err));
+        });
+      });
+
+      c.on("reconnect", () => setMqttState("reconectando…"));
+      c.on("close", () => setMqttState("desconectado"));
+      c.on("error", (e) => setMqttErr(e?.message || String(e)));
+
+      c.on("message", async (topic, buf) => {
+        let payload = buf.toString();
+        try {
+          payload = JSON.parse(payload);
+        } catch {}
+        setLastMqttMsg({ topic, payload, at: Date.now() });
+
+        // 1) JSON con { img_b64 }
+        if (typeof payload === "object" && payload?.img_b64) {
+          const blob = base64ToBlob(payload.img_b64, "image/jpeg");
+          if (blob) {
+            snapshotBlobRef.current = blob;
+            const url = URL.createObjectURL(blob);
+            setSnapshotUrl((prev) => {
+              if (prev) URL.revokeObjectURL(prev);
+              return url;
+            });
+          }
+          enqueueMqttFrameFromB64(payload.img_b64);
+        }
+
+        // 2) Frame directo como base64 (ej: topic .../frame o .../video)
+        if (
+          typeof payload === "string" &&
+          (topic.endsWith("/frame") || topic.endsWith("/video"))
+        ) {
+          enqueueMqttFrameFromB64(payload);
+        }
+      });
+    } catch (e) {
+      setMqttErr(e?.message || String(e));
+      setMqttState("desconectado");
+    }
+  }
+
+  function disconnectMqtt() {
+    setMqttErr(null);
+    stopSnapLoop();
+    const c = mqttClientRef.current;
+    if (c) {
+      try {
+        c.end(true);
+      } catch {}
+      mqttClientRef.current = null;
+    }
+    setMqttState("desconectado");
+    setMqttStreamOn(false);
+  }
+
+  function sendSnap() {
+    const c = mqttClientRef.current;
+    if (!c || mqttState !== "conectado") {
+      setMqttErr("Conéctate primero al broker.");
+      return;
+    }
+    c.publish(topicCmd, "snap", { qos: 0 });
+  }
+
+  // === Pull mode (snap loop) ===
+  function startSnapLoop() {
+    const c = mqttClientRef.current;
+    if (!c || mqttState !== "conectado") return;
+    stopSnapLoop();
+    const intervalMs = Math.max(
+      50,
+      Math.floor(1000 / (mqttRequestFps || MQTT_REQUEST_FPS_DEFAULT))
+    );
+    mqttSnapIntervalRef.current = setInterval(() => {
+      try {
+        c.publish(topicCmd, "snap", { qos: 0 });
+      } catch {}
+    }, intervalMs);
+  }
+  function stopSnapLoop() {
+    if (mqttSnapIntervalRef.current) {
+      clearInterval(mqttSnapIntervalRef.current);
+      mqttSnapIntervalRef.current = null;
+    }
+  }
+
+  // Comandos de video: push (firmware) o pull (snap loop)
+  function startMqttStream() {
+    const c = mqttClientRef.current;
+    if (!c || mqttState !== "conectado") {
+      setMqttErr("Conéctate primero al broker.");
+      return;
+    }
+    if (mqttPullMode) {
+      startSnapLoop();
+    } else {
+      c.publish(topicCmd, "stream_on", { qos: 0 });
+    }
+    setMqttStreamOn(true);
+  }
+  function stopMqttStream() {
+    const c = mqttClientRef.current;
+    if (!c || mqttState !== "conectado") {
+      setMqttErr("Conéctate primero al broker.");
+      return;
+    }
+    if (mqttPullMode) {
+      stopSnapLoop();
+    } else {
+      c.publish(topicCmd, "stream_off", { qos: 0 });
+    }
+    setMqttStreamOn(false);
+  }
+
+  // Grabación del canvas MQTT
+  function startRecordingMqtt() {
+    const canvas = mqttCanvasRef.current;
+    if (!canvas) return;
     const stream =
-      canvasRef.current.captureStream?.(STREAM_FPS) ||
-      canvasRef.current.mozCaptureStream?.(STREAM_FPS);
+      canvas.captureStream?.(MQTT_PLAYBACK_FPS) ||
+      canvas.mozCaptureStream?.(MQTT_PLAYBACK_FPS);
     if (!stream) {
-      setCamError("Tu navegador no soporta captureStream en canvas.");
+      setMqttErr("Tu navegador no soporta captureStream en canvas.");
       return;
     }
     let mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
@@ -347,35 +466,45 @@ export default function Logs() {
       ? "video/webm"
       : "";
     if (!mime) {
-      setCamError("MediaRecorder no soportado para WebM en este navegador.");
+      setMqttErr("MediaRecorder no soportado para WebM en este navegador.");
       return;
     }
-    recordedChunksRef.current = [];
-    lastVideoBlobRef.current = null;
+    mqttChunksRef.current = [];
+    mqttVideoBlobRef.current = null;
     try {
       const mr = new MediaRecorder(stream, {
         mimeType: mime,
         videoBitsPerSecond: 4_000_000,
       });
       mr.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) recordedChunksRef.current.push(e.data);
+        if (e.data && e.data.size > 0) mqttChunksRef.current.push(e.data);
       };
       mr.onstop = () => {
-        const blob = new Blob(recordedChunksRef.current, { type: mime });
-        lastVideoBlobRef.current = blob;
+        mqttVideoBlobRef.current = new Blob(mqttChunksRef.current, {
+          type: mime,
+        });
       };
-      mediaRecorderRef.current = mr;
-      mr.start(250); // timeslice
-      setIsRecording(true);
+      mqttMediaRecorderRef.current = mr;
+      mr.start(250);
+      setIsRecordingMqtt(true);
     } catch (e) {
-      setCamError(e.message || String(e));
+      setMqttErr(e?.message || String(e));
     }
   }
-
-  function stopRecording() {
-    const mr = mediaRecorderRef.current;
+  function stopRecordingMqtt() {
+    const mr = mqttMediaRecorderRef.current;
     if (mr && mr.state !== "inactive") mr.stop();
-    setIsRecording(false);
+    setIsRecordingMqtt(false);
+  }
+  function saveMqttVideo() {
+    if (!mqttVideoBlobRef.current) {
+      setMqttErr("No hay un video grabado para guardar.");
+      return;
+    }
+    const fname = `cam-mqtt-${new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")}.webm`;
+    downloadBlob(mqttVideoBlobRef.current, fname);
   }
 
   function downloadBlob(blob, filename) {
@@ -388,45 +517,40 @@ export default function Logs() {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
-
-  // Nuevo: guardar SOLO video
-  function saveVideo() {
-    if (!lastVideoBlobRef.current) {
-      setCamError("No hay un video grabado para guardar.");
+  function saveMqttPhoto() {
+    if (!snapshotBlobRef.current) {
+      setMqttErr(
+        "No hay una foto disponible (aún no recibimos frame por MQTT)."
+      );
       return;
     }
-    const fname = `cam-${new Date().toISOString().replace(/[:.]/g, "-")}.webm`;
-    downloadBlob(lastVideoBlobRef.current, fname);
-  }
-  async function savePhoto() {
-    try {
-      if (!snapshotBlobRef.current) {
-        await takeSnapshot();
-      }
-      if (!snapshotBlobRef.current) {
-        setCamError("No hay una foto disponible para guardar.");
-        return;
-      }
-      const fname = `snapshot-${new Date()
-        .toISOString()
-        .replace(/[:.]/g, "-")}.jpg`;
-      downloadBlob(snapshotBlobRef.current, fname);
-    } catch (e) {
-      setCamError(e.message || String(e));
-    }
+    const fname = `snapshot-mqtt-${new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")}.jpg`;
+    downloadBlob(snapshotBlobRef.current, fname);
   }
 
+  // Limpieza general
   useEffect(() => {
-    // limpieza al desmontar
     return () => {
-      stopDrawingLoop();
-      stopRecording();
-      const im = imgRef.current;
-      if (im) im.src = "";
+      // MQTT
+      clearTimeout(mqttTimerRef.current);
+      mqttQueueRef.current.forEach((f) => f?.close && f.close());
+      mqttQueueRef.current = [];
+      stopRecordingMqtt();
+      stopSnapLoop();
+      disconnectMqtt();
+
+      // liberar snapshot
+      setSnapshotUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ===== UI =====
   return (
     <div className="mx-auto max-w-[1600px] px-4 md:px-6 py-6 min-h-screen">
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
@@ -441,7 +565,6 @@ export default function Logs() {
 
           {/* Filtros visibles */}
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 min-w-0">
-            {/* shop_id: SELECT obligatorio */}
             <div className="min-w-0">
               <label className="block text-sm text-foreground/60">
                 Tienda <span className="text-red-500">*</span>
@@ -486,7 +609,6 @@ export default function Logs() {
                 onKeyDown={(e) => e.key === "Enter" && fetchList()}
               />
             </div>
-
             <div className="min-w-0">
               <label className="block text-sm text-foreground/60">Final</label>
               <input
@@ -638,238 +760,6 @@ export default function Logs() {
               Selecciona "Detalle" en una fila para ver la información completa.
             </div>
           )}
-        </Card>
-      </div>
-
-      {/* FILA 3: CÁMARA */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 mt-6">
-        <Card className="xl:col-span-12 isolate">
-          <div className="flex items-center gap-2">
-            <h3 className="text-lg font-semibold">Cámara</h3>
-            {camLoading && <Spinner />}
-          </div>
-          <p className="text-sm text-foreground/60 mt-1">
-            Stream en vivo, capturas y controles básicos desde módulo ESP32-CAM.
-          </p>
-
-          {/* Config rápida */}
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm text-foreground/60">
-                Base URL
-              </label>
-              <input
-                className="input w-full"
-                value={camBase}
-                onChange={(e) => setCamBase(e.target.value)}
-                placeholder="http://192.168.68.169"
-              />
-              {isMixedBlocked && (
-                <div className="text-xs text-amber-600 mt-1">
-                  El navegador puede bloquear el stream por contenido mixto
-                  (HTTPS→HTTP).
-                </div>
-              )}
-            </div>
-
-            <div className="flex items-end gap-2 flex-wrap">
-              <Button
-                onClick={startStream}
-                disabled={streamOn || isMixedBlocked}
-              >
-                Ver stream
-              </Button>
-              <Button onClick={stopStream} disabled={!streamOn}>
-                Detener
-              </Button>
-              <Button onClick={takeSnapshot}>Foto</Button>
-              <Button onClick={savePhoto}>Guardar foto</Button>
-              <Button onClick={fetchCamStatus}>Estado</Button>
-              <a
-                className="btn inline-flex items-center justify-center px-3 py-2 rounded-lg neu"
-                href={camUrl("/")}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Abrir UI
-              </a>
-            </div>
-          </div>
-
-          {/* Vista */}
-          <div className="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-6">
-            <div>
-              <h4 className="font-medium mb-2">Vista en vivo</h4>
-              <div className="aspect-video w-full overflow-hidden rounded-xl border border-border/50 bg-black/40 flex items-center justify-center relative">
-                {/* canvas visible */}
-                <canvas
-                  ref={canvasRef}
-                  className="w-full h-full"
-                  style={{ display: "block" }}
-                />
-                {/* img fuente MJPEG oculta */}
-                <img
-                  ref={imgRef}
-                  alt="Stream MJPEG"
-                  crossOrigin="anonymous"
-                  style={{ display: "none" }}
-                />
-                {isRecording && (
-                  <div className="absolute top-2 left-2 text-xs bg-red-600/80 text-white px-2 py-1 rounded-md">
-                    ● Grabando
-                  </div>
-                )}
-                {!streamOn && (
-                  <div className="absolute inset-0 flex items-center justify-center text-sm text-foreground/60 p-4 text-center">
-                    Pulsa <span className="font-medium mx-1">Ver stream</span>{" "}
-                    para iniciar.
-                  </div>
-                )}
-              </div>
-              {/* Controles de grabación */}
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Button
-                  onClick={startRecording}
-                  disabled={!streamOn || isRecording}
-                >
-                  Empezar a grabar
-                </Button>
-                <Button
-                  onClick={stopRecording}
-                  variant="destructive"
-                  disabled={!isRecording}
-                >
-                  Detener grabación
-                </Button>
-                <Button onClick={saveVideo}>Guardar video</Button>
-              </div>
-            </div>
-
-            <div>
-              <h4 className="font-medium mb-2">Última captura</h4>
-              <div className="aspect-video w-full overflow-hidden rounded-xl border border-border/50 bg-black/40 flex items-center justify-center">
-                {snapshotUrl ? (
-                  <img
-                    src={snapshotUrl}
-                    alt="Snapshot"
-                    className="w-full h-full object-contain"
-                  />
-                ) : (
-                  <div className="text-sm text-foreground/60 p-4 text-center">
-                    Toma una foto con <span className="font-medium">Foto</span>{" "}
-                    o usa <span className="font-medium">Guardar foto</span>.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Controles básicos */}
-          <div className="mt-6">
-            <h4 className="font-medium">Controles</h4>
-            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-sm text-foreground/60">
-                  Brillo (−2 a 2)
-                </label>
-                <input
-                  type="range"
-                  min={-2}
-                  max={2}
-                  step={1}
-                  defaultValue={0}
-                  className="w-full"
-                  onChange={(e) => camControl("brightness", e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-foreground/60">
-                  Contraste (−2 a 2)
-                </label>
-                <input
-                  type="range"
-                  min={-2}
-                  max={2}
-                  step={1}
-                  defaultValue={0}
-                  className="w-full"
-                  onChange={(e) => camControl("contrast", e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-foreground/60">
-                  Saturación (−2 a 2)
-                </label>
-                <input
-                  type="range"
-                  min={-2}
-                  max={2}
-                  step={1}
-                  defaultValue={0}
-                  className="w-full"
-                  onChange={(e) => camControl("saturation", e.target.value)}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  id="hmirror"
-                  type="checkbox"
-                  onChange={(e) =>
-                    camControl("hmirror", e.target.checked ? 1 : 0)
-                  }
-                />
-                <label htmlFor="hmirror" className="text-sm text-foreground/80">
-                  Flip horizontal
-                </label>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  id="vflip"
-                  type="checkbox"
-                  onChange={(e) =>
-                    camControl("vflip", e.target.checked ? 1 : 0)
-                  }
-                />
-                <label htmlFor="vflip" className="text-sm text-foreground/80">
-                  Flip vertical
-                </label>
-              </div>
-              <div>
-                <label className="block text-sm text-foreground/60">
-                  LED intensidad (0–255)
-                </label>
-                <input
-                  type="range"
-                  min={0}
-                  max={255}
-                  step={1}
-                  defaultValue={0}
-                  className="w-full"
-                  onChange={(e) => camControl("led_intensity", e.target.value)}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Estado */}
-          <div className="mt-6">
-            {camError && (
-              <div className="text-red-600 text-sm neu-lg p-3 rounded-lg">
-                {String(camError)}
-              </div>
-            )}
-            {camStatus && (
-              <div className="mt-3 overflow-auto">
-                <JsonView className="card-response" data={camStatus} />
-              </div>
-            )}
-            {!camStatus && !camError && (
-              <div className="text-sm text-foreground/60">
-                Pulsa <span className="font-medium">Estado</span> para ver
-                parámetros actuales.
-              </div>
-            )}
-          </div>
         </Card>
       </div>
     </div>

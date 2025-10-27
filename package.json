@@ -12,6 +12,7 @@
     "axios": "^1.7.2",
     "clsx": "^2.1.1",
     "gridstack": "^12.3.3",
+    "mqtt": "^5.14.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.1",

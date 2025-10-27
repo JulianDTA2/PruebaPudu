@@ -55,6 +55,7 @@ export default function AdminLayout() {
               <NavItem to="/admin/logs">Logs</NavItem>
               <NavItem to="/admin/explorer">API</NavItem>
               <NavItem to="/admin/apibella">BellaBot</NavItem>
+              <NavItem to="/admin/cam">Camara</NavItem>
             </nav>
             <button
               type="button"
@@ -125,6 +126,9 @@ export default function AdminLayout() {
                 </NavItem>
                 <NavItem to="/admin/bellabot" onClick={() => setOpen(false)}>
                   BellaBot
+                </NavItem>
+                <NavItem to="/admin/cam" onClick={() => setOpen(false)}>
+                  Camara
                 </NavItem>
               </div>
             </div>

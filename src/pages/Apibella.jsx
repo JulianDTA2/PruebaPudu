@@ -1,3 +1,4 @@
+// Apibella.jsx — Parte 1/4
 import React, { useEffect, useMemo, useState } from "react";
 import { Card } from "../components/Card.jsx";
 import Button from "../components/Button.jsx";
@@ -5,7 +6,11 @@ import NeumorphicModal from "../components/NeumorphicModal.jsx";
 import { Pudu, get, post } from "../services/api.js";
 import JsonView from "../components/JsonView";
 
-const PRODUCT_IMAGES = {
+/* =========================
+ *  Constantes / Helpers
+ * ========================= */
+
+export const PRODUCT_IMAGES = {
   bellabot:
     "https://cdn.pudutech.com/website/images/pc/bellabot/parameter2.2.0.png",
   cc1: "https://cdn.pudutech.com/website/images/cc1/parameters_robot_en.png",
@@ -15,13 +20,16 @@ const PRODUCT_IMAGES = {
     "https://cdn.pudutech.com/official-website/flashbot_new/s16-tuya.webp",
 };
 
-function normalizeProductName(raw) {
+/** Normaliza el nombre/código del producto para matchear el mapeo */
+export function normalizeProductName(raw) {
   if (!raw) return null;
   const s = String(raw)
     .toLowerCase()
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+  // matches directos
   if (s === "bellabot" || s === "bella bot" || s === "bella") return "bellabot";
   if (
     s === "bellabot pro" ||
@@ -32,55 +40,42 @@ function normalizeProductName(raw) {
     return "bellabot pro";
   if (s === "cc1") return "cc1";
   if (s === "flashbot" || s === "flash bot") return "flashbot";
+
+  // heurísticas por inclusión
   if (s.includes("bellabot pro") || (s.includes("bella") && s.includes("pro")))
     return "bellabot pro";
   if (s.includes("bellabot") || s.includes("bella bot") || s === "bella")
     return "bellabot";
   if (s.includes("flash")) return "flashbot";
   if (s.includes("cc1")) return "cc1";
+
   return null;
 }
 
-const toUnixSec = (d) => Math.floor(new Date(d).getTime() / 1000);
-const diffDays = (a, b) =>
+/** Utils de tiempo/unidades */
+export const toUnixSec = (d) => Math.floor(new Date(d).getTime() / 1000);
+export const diffDays = (a, b) =>
   Math.max(0, Math.round((toUnixSec(b) - toUnixSec(a)) / 86400));
-const getDefaultTzHours = () =>
+export const getDefaultTzHours = () =>
   Math.round(-new Date().getTimezoneOffset() / 60);
-const chooseUnit = (choice, startDate, endDate) =>
-  choice === "auto"
-    ? diffDays(startDate, endDate) > 1
-      ? "day"
-      : "hour"
-    : choice;
-const c = (key, label = key) => ({ key, label });
+export const chooseUnit = (choice, startDate, endDate) =>
+  choice === "auto" ? (diffDays(startDate, endDate) > 1 ? "day" : "hour") : choice;
 
-function Spinner({ className = "" }) {
+/** Helper columnas para tablas */
+export const c = (key, label = key) => ({ key, label });
+
+/** Spinner compacto reutilizable */
+export function Spinner({ className = "" }) {
   return (
-    <svg
-      className={`animate-spin h-4 w-4 ${className}`}
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-    >
-      <circle
-        className="opacity-25"
-        cx="12"
-        cy="12"
-        r="10"
-        stroke="currentColor"
-        strokeWidth="4"
-        fill="none"
-      />
-      <path
-        className="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8v4A4 4 0 008 12H4z"
-      />
+    <svg className={`animate-spin h-4 w-4 ${className}`} viewBox="0 0 24 24" aria-hidden="true">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4A4 4 0 008 12H4z" />
     </svg>
   );
 }
 
-// Tabla 100% responsive: scroll horizontal en móvil, thead oculto en móvil con mini-headers por celda
-const renderTable = (rows, columns) => (
+/** Tabla responsive (thead oculto en móvil + etiquetas por celda) */
+export const renderTable = (rows, columns) => (
   <div className="mt-3 overflow-x-auto">
     <table className="min-w-max w-full">
       <thead className="hidden md:table-header-group">
@@ -115,10 +110,7 @@ const renderTable = (rows, columns) => (
   </div>
 );
 
-// =========================
-//  Configuración por módulo
-// =========================
-const MODULES = {
+export const MODULES = {
   delivery: {
     key: "delivery",
     summaryTitle: "Resumen del período (Delivery)",
@@ -131,16 +123,8 @@ const MODULES = {
       const q = res?.qoq || {};
       return [
         { label: "Km operados", value: s.mileage ?? 0, prev: q.mileage },
-        {
-          label: "Horas de operación",
-          value: s.duration ?? 0,
-          prev: q.duration,
-        },
-        {
-          label: "Mesas entregadas",
-          value: s.table_count ?? 0,
-          prev: q.table_count,
-        },
+        { label: "Horas de operación", value: s.duration ?? 0, prev: q.duration },
+        { label: "Mesas entregadas", value: s.table_count ?? 0, prev: q.table_count },
         { label: "Bandejas", value: s.tray_count ?? 0, prev: q.tray_count },
         { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
       ];
@@ -203,21 +187,9 @@ const MODULES = {
       const q = res?.qoq || {};
       return [
         { label: "Km operados", value: s.mileage ?? 0, prev: q.mileage },
-        {
-          label: "Horas de operación",
-          value: s.duration ?? 0,
-          prev: q.duration,
-        },
-        {
-          label: "Interacciones",
-          value: s.interactive_count ?? 0,
-          prev: q.interactive_count,
-        },
-        {
-          label: "Duración interacciones (h)",
-          value: s.interactive_duration ?? 0,
-          prev: q.interactive_duration,
-        },
+        { label: "Horas de operación", value: s.duration ?? 0, prev: q.duration },
+        { label: "Interacciones", value: s.interactive_count ?? 0, prev: q.interactive_count },
+        { label: "Duración interacciones (h)", value: s.interactive_duration ?? 0, prev: q.interactive_duration },
         { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
       ];
     },
@@ -277,16 +249,8 @@ const MODULES = {
       const q = res?.qoq || {};
       return [
         { label: "Km operados", value: s.mileage ?? 0, prev: q.mileage },
-        {
-          label: "Horas de operación",
-          value: s.duration ?? 0,
-          prev: q.duration,
-        },
-        {
-          label: "Destinos/Leads",
-          value: s.destination_count ?? 0,
-          prev: q.destination_count,
-        },
+        { label: "Horas de operación", value: s.duration ?? 0, prev: q.duration },
+        { label: "Destinos/Leads", value: s.destination_count ?? 0, prev: q.destination_count },
         { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
       ];
     },
@@ -341,17 +305,9 @@ const MODULES = {
       const s = res?.summary || {};
       const q = res?.qoq || {};
       return [
-        {
-          label: "Interacciones",
-          value: s.interactive_count ?? 0,
-          prev: q.interactive_count,
-        },
+        { label: "Interacciones", value: s.interactive_count ?? 0, prev: q.interactive_count },
         { label: "Voces", value: s.voice_count ?? 0, prev: q.voice_count },
-        {
-          label: "Duración voz (h)",
-          value: s.voice_duration ?? 0,
-          prev: q.voice_duration,
-        },
+        { label: "Duración voz (h)", value: s.voice_duration ?? 0, prev: q.voice_duration },
       ];
     },
     chartCols: [
@@ -403,21 +359,9 @@ const MODULES = {
       return [
         { label: "Horas operación", value: s.duration ?? 0, prev: q.duration },
         { label: "Saludos", value: s.play_count ?? 0, prev: q.play_count },
-        {
-          label: "Alcance",
-          value: s.attach_persons ?? 0,
-          prev: q.attach_persons,
-        },
-        {
-          label: "Atraídos",
-          value: s.attract_persons ?? 0,
-          prev: q.attract_persons,
-        },
-        {
-          label: "Interacciones",
-          value: s.interactive_count ?? 0,
-          prev: q.interactive_count,
-        },
+        { label: "Alcance", value: s.attach_persons ?? 0, prev: q.attach_persons },
+        { label: "Atraídos", value: s.attract_persons ?? 0, prev: q.attract_persons },
+        { label: "Interacciones", value: s.interactive_count ?? 0, prev: q.interactive_count },
         { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
       ];
     },
@@ -679,16 +623,8 @@ const MODULES = {
         { label: "Km", value: s.mileage ?? 0, prev: q.mileage },
         { label: "Horas", value: s.duration ?? 0, prev: q.duration },
         { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
-        {
-          label: "Destinos",
-          value: s.destination_count ?? 0,
-          prev: q.destination_count,
-        },
-        {
-          label: "Destinos completados",
-          value: s.finished_destination_count ?? 0,
-          prev: q.finished_destination_count,
-        },
+        { label: "Destinos", value: s.destination_count ?? 0, prev: q.destination_count },
+        { label: "Destinos completados", value: s.finished_destination_count ?? 0, prev: q.finished_destination_count },
       ];
     },
     chartCols: [
@@ -737,10 +673,10 @@ const MODULES = {
   },
 };
 
-// =========================
-//  Hook reutilizable por módulo
-// =========================
-function useModule({
+/* =========================
+ *  Hook reutilizable por módulo
+ * ========================= */
+export function useModule({
   config,
   startDate,
   endDate,
@@ -806,6 +742,7 @@ function useModule({
       };
       if (shopId) params.shop_id = shopId;
       if (config.includeAdId && adId) params.ad_id = Number(adId);
+
       const data = await getWithPopup(
         `${config.popupPrefix} · lista`,
         config.pathList,
@@ -850,9 +787,6 @@ function useModule({
   };
 }
 
-// =========================
-//  Secciones UI: Summary / List
-// =========================
 function SummarySection({ title, module, state }) {
   const {
     timeUnit,
@@ -862,6 +796,7 @@ function SummarySection({ title, module, state }) {
     fetchSummary,
     clearSummary,
   } = state;
+
   const chart = summaryRes?.chart || [];
   const qoqChart = summaryRes?.qoq_chart || [];
   const kpis = useMemo(() => module.kpis(summaryRes), [summaryRes, module]);
@@ -869,6 +804,7 @@ function SummarySection({ title, module, state }) {
   return (
     <Card className="lg:col-span-12">
       <h2>{title}</h2>
+
       <div className="mt-3 grid grid-cols-1 md:grid-cols-5 gap-3">
         <div className="min-w-0">
           <label className="block text-sm text-slate-500">time_unit</label>
@@ -883,6 +819,7 @@ function SummarySection({ title, module, state }) {
           </select>
           <p className="text-xs mt-1">auto: por día si &gt; 24h.</p>
         </div>
+
         <div className="md:col-span-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
@@ -958,6 +895,7 @@ function ListSection({ title, module, state }) {
   return (
     <Card className="lg:col-span-12">
       <h2>{title}</h2>
+
       <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
         <div className="min-w-0">
           <label className="block text-sm text-slate-500">group_by</label>
@@ -970,10 +908,9 @@ function ListSection({ title, module, state }) {
             <option value="shop">shop</option>
           </select>
         </div>
+
         <div className="min-w-0">
-          <label className="block text-sm text-slate-500">
-            time_unit (list)
-          </label>
+          <label className="block text-sm text-slate-500">time_unit (list)</label>
           <select
             className="input w-full"
             value={listTimeUnit}
@@ -986,6 +923,7 @@ function ListSection({ title, module, state }) {
           </select>
           <p className="text-xs mt-1">“all” solo con group_by=shop.</p>
         </div>
+
         <div className="min-w-0">
           <label className="block text-sm text-slate-500">limit</label>
           <input
@@ -998,14 +936,13 @@ function ListSection({ title, module, state }) {
             placeholder="1..20"
           />
         </div>
+
         <div className="min-w-0">
           <label className="block text-sm text-slate-500">offset</label>
           <input
             className="input-neu w-full"
             value={offset}
-            onChange={(e) =>
-              setOffset(Math.max(0, Number(e.target.value) || 0))
-            }
+            onChange={(e) => setOffset(Math.max(0, Number(e.target.value) || 0))}
             inputMode="numeric"
           />
         </div>
@@ -1013,18 +950,12 @@ function ListSection({ title, module, state }) {
         <div className="lg:col-span-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 items-stretch">
             <div>
-              <Button
-                onClick={() => fetchList(0)}
-                disabled={loadingList}
-                className="w-full"
-              >
+              <Button onClick={() => fetchList(0)} disabled={loadingList} className="w-full">
                 Consultar lista
               </Button>
             </div>
             <div>
-              <Button onClick={clearList} className="w-full">
-                Limpiar
-              </Button>
+              <Button onClick={clearList} className="w-full">Limpiar</Button>
             </div>
             {total > 0 && (
               <div className="text-sm text-slate-500 flex items-center justify-center sm:justify-end">
@@ -1058,8 +989,7 @@ function ListSection({ title, module, state }) {
             </Button>
           </div>
           <div className="text-sm text-slate-500 flex items-center justify-center sm:justify-start">
-            Página {Math.floor(offset / Number(limit)) + 1} · {from}-{to} de{" "}
-            {total}
+            Página {Math.floor(offset / Number(limit)) + 1} · {from}-{to} de {total}
           </div>
         </div>
       )}
@@ -1067,6 +997,9 @@ function ListSection({ title, module, state }) {
   );
 }
 
+/* =========================
+ *  Navegación por pestañas
+ * ========================= */
 function TabsNav({ tabs, activeKey, onChange }) {
   const handleKeyDown = (e) => {
     const idx = tabs.findIndex((t) => t.key === activeKey);
@@ -1097,12 +1030,11 @@ function TabsNav({ tabs, activeKey, onChange }) {
                 aria-selected={active}
                 aria-controls={`panel-${t.key}`}
                 onClick={() => onChange(t.key)}
-                className={`btn-neu shrink-0 px-3 py-2 text-sm font-medium rounded-md border transition
-                  ${
-                    active
-                      ? "bg-slate-900 text-white border-slate-900"
-                      : "bg-white text-slate-600 hover:text-slate-900 border-slate-200"
-                  }`}
+                className={`btn-neu shrink-0 px-3 py-2 text-sm font-medium rounded-md border transition ${
+                  active
+                    ? "bg-slate-900 text-white border-slate-900"
+                    : "bg-white text-slate-600 hover:text-slate-900 border-slate-200"
+                }`}
               >
                 {t.label}
               </button>
@@ -1129,11 +1061,7 @@ function TabPanel({ tabKey, activeKey, children }) {
   );
 }
 
-/**
- * =========================
- *  Pestaña: Operaciones
- * =========================
- */
+/* (Opcional) Bloque JSON simple usado en algunas vistas */
 function JsonBlock({ data }) {
   return (
     <pre className="mt-3 p-3 bg-slate-50 rounded-md overflow-x-auto text-xs">
@@ -1143,7 +1071,7 @@ function JsonBlock({ data }) {
 }
 
 function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
-  // Campos comunes para esta pestaña
+  // Campos comunes
   const [sn, setSn] = useState("");
   const [needElements, setNeedElements] = useState(true);
   const [limit, setLimit] = useState(10);
@@ -1151,7 +1079,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
 
-  // ---- Selector de robots (SN) ----
+  // Selector de robots (SN) — dependiente de shopId
   const [robotsLoading, setRobotsLoading] = useState(false);
   const [robotsErr, setRobotsErr] = useState(null);
   const [robots, setRobots] = useState([]);
@@ -1162,8 +1090,8 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       setRobotsLoading(true);
       setRobotsErr(null);
       setRobots([]);
-      const res = await Pudu.getRobots({ shop_id: shopId || undefined });
 
+      const res = await Pudu.getRobots({ shop_id: shopId || undefined });
       const list =
         res?.data?.list ??
         res?.list ??
@@ -1201,7 +1129,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
 
       setRobots(unique);
 
-      // autoseleccionar si hay solo uno
+      // Autoseleccionar si hay solo uno
       if (unique.length === 1) {
         setManualSnMode(false);
         setSn(unique[0].sn);
@@ -1216,6 +1144,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
   // recargar lista al cambiar shopId
   useEffect(() => {
     loadRobots();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shopId]);
 
   // Mapas / puntos
@@ -1320,6 +1249,8 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
   const [groupId, setGroupId] = useState("");
   const [device, setDevice] = useState("");
   const [robotsGroupId, setRobotsGroupId] = useState("");
+
+  // Door Capture
   const [doorCapturePid, setDoorCapturePid] = useState("");
 
   // Tray order
@@ -1327,13 +1258,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
     JSON.stringify(
       {
         orders: [
-          {
-            table_no: "2",
-            table_name: "A2",
-            name: "Tea",
-            amount: 1,
-            id: "id-1",
-          },
+          { table_no: "2", table_name: "A2", name: "Tea", amount: 1, id: "id-1" },
         ],
       },
       null,
@@ -1372,10 +1297,10 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
     )
   );
   const [errandActionSession, setErrandActionSession] = useState("");
-  const [errandActionType, setErrandActionType] = useState("CANCEL");
+  const [errandActionType, setErrandActionType] = useState("CANCEL"); // CANCEL | RETRY
   const [errandActionAuth, setErrandActionAuth] = useState("");
 
-  // Helper
+  // Helpers
   const parseJSON = (txt, fallback = {}) => {
     try {
       const v = txt ? JSON.parse(txt) : fallback;
@@ -1386,7 +1311,6 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
     }
   };
 
-  // Handlers (cada botón tiene su propio espacio y su propio handler)
   const run = async (fn) => {
     try {
       setBusy(true);
@@ -1398,6 +1322,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
     }
   };
 
+  // ==== Handlers ====
   // Mapas
   const handleListMaps = () =>
     run(() =>
@@ -1481,9 +1406,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       getWithPopup(
         "Operaciones · Recargar (v1)",
         "/open-platform-service/v1/recharge",
-        {
-          sn,
-        }
+        { sn }
       )
     );
   const handleRechargeV2 = () =>
@@ -1491,9 +1414,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       getWithPopup(
         "Operaciones · Recargar (v2)",
         "/open-platform-service/v2/recharge",
-        {
-          sn,
-        }
+        { sn }
       )
     );
 
@@ -1503,9 +1424,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       getWithPopup(
         "Operaciones · Estado de puertas",
         "/open-platform-service/v1/door_state",
-        {
-          sn,
-        }
+        { sn }
       )
     );
 
@@ -1529,10 +1448,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       postWithPopup(
         "Operaciones · Pantalla",
         "/open-platform-service/v1/robot/screen/set",
-        {
-          sn,
-          payload: { info: { content: screenContent, show: !!screenShow } },
-        }
+        { sn, payload: { info: { content: screenContent, show: !!screenShow } } }
       )
     );
 
@@ -1559,22 +1475,15 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       postWithPopup(
         "Operaciones · Delivery task",
         "/open-platform-service/v1/delivery_task",
-        {
-          sn,
-          payload: parseJSON(deliveryPayload, {}),
-        }
+        { sn, payload: parseJSON(deliveryPayload, {}) }
       )
     );
-
   const handleDeliveryAction = () =>
     run(() =>
       postWithPopup(
         "Operaciones · Delivery action",
         "/open-platform-service/v1/delivery_action",
-        {
-          sn,
-          payload: { action: deliveryAction },
-        }
+        { sn, payload: { action: deliveryAction } }
       )
     );
 
@@ -1584,22 +1493,15 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       postWithPopup(
         "Operaciones · Transport task",
         "/open-platform-service/v1/transport_task",
-        {
-          sn,
-          payload: parseJSON(transportPayload, {}),
-        }
+        { sn, payload: parseJSON(transportPayload, {}) }
       )
     );
-
   const handleTransportAction = () =>
     run(() =>
       postWithPopup(
         "Operaciones · Transport action",
         "/open-platform-service/v1/transport_action",
-        {
-          sn,
-          payload: { action: transportAction },
-        }
+        { sn, payload: { action: transportAction } }
       )
     );
 
@@ -1624,10 +1526,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       postWithPopup(
         "Operaciones · Cancelar tareas",
         "/open-platform-service/v1/cancel_task",
-        {
-          sn,
-          payload: parseJSON(cancelTasksPayload, {}),
-        }
+        { sn, payload: parseJSON(cancelTasksPayload, {}) }
       )
     );
 
@@ -1637,12 +1536,9 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       getWithPopup(
         "Operaciones · Estado por SN",
         "/open-platform-service/v1/status/get_by_sn",
-        {
-          sn,
-        }
+        { sn }
       )
     );
-
   const handleStatusByGroup = () =>
     run(() =>
       getWithPopup(
@@ -1658,10 +1554,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       getWithPopup(
         "Operaciones · Grupos vinculados",
         "/open-platform-service/v1/robot/group/list",
-        {
-          device: device || undefined,
-          shop_id: shopId || undefined,
-        }
+        { device: device || undefined, shop_id: shopId || undefined }
       )
     );
 
@@ -1690,22 +1583,30 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       postWithPopup(
         "Operaciones · Tray order",
         "/open-platform-service/v1/tray_order",
-        {
-          sn,
-          payload: parseJSON(trayOrderPayload, {}),
-        }
+        { sn, payload: parseJSON(trayOrderPayload, {}) }
       )
     );
 
-  // Agrupación de puntos (map tool)
+  // Agrupación de puntos
   const handlePointGrouping = () =>
     run(() =>
       postWithPopup(
         "Operaciones · Agrupación de puntos",
         "/map-service/v1/open/group",
+        { sn, map_name: groupMapName }
+      )
+    );
+
+  // Door Capture (ajusta endpoint si tu API usa otro)
+  const handleDoorCapture = () =>
+    run(() =>
+      getWithPopup(
+        "Operaciones · Door Capture",
+        "/open-platform-service/v1/door_capture/list",
         {
-          sn,
-          map_name: groupMapName,
+          pid: doorCapturePid || sn,
+          limit: Number(limit) || 10,
+          offset: Number(offset) || 0,
         }
       )
     );
@@ -1716,13 +1617,9 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       postWithPopup(
         "Operaciones · A2B (errand)",
         "/open-platform-service/v1/task_errand",
-        {
-          sn,
-          payload: parseJSON(errandPayload, {}),
-        }
+        { sn, payload: parseJSON(errandPayload, {}) }
       )
     );
-
   const handleErrandAction = () =>
     run(() =>
       postWithPopup(
@@ -1739,26 +1636,13 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       )
     );
 
-  // Door Capture
-  const handleDoorCapture = () =>
-    run(() =>
-      postWithPopup(
-        "Operaciones · Door Capture",
-        "/biz-open-service/v1/robotDoor/task_list",
-        {
-          pid: doorCapturePid || sn,
-          limit,
-          offset,
-        }
-      )
-    );
-
-  // Tab content
+  // ===== UI =====
   return (
     <>
-      {/* Controles comunes de la pestaña */}
+      {/* Controles comunes */}
       <Card className="lg:col-span-12">
         <h2>Operaciones · Controles comunes</h2>
+
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <div className="min-w-0">
             <label className="block text-sm text-slate-500">sn (robot)</label>
@@ -1834,47 +1718,43 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
             <input
               className="input-neu w-full"
               value={limit}
-              onChange={(e) =>
-                setLimit(Math.max(0, Number(e.target.value) || 0))
-              }
+              onChange={(e) => setLimit(Math.max(0, Number(e.target.value) || 0))}
               inputMode="numeric"
             />
           </div>
+
           <div>
             <label className="block text-sm text-slate-500">offset</label>
             <input
               className="input-neu w-full"
               value={offset}
-              onChange={(e) =>
-                setOffset(Math.max(0, Number(e.target.value) || 0))
-              }
+              onChange={(e) => setOffset(Math.max(0, Number(e.target.value) || 0))}
               inputMode="numeric"
             />
           </div>
+
           <div>
             <label className="block text-sm text-slate-500">
               need_element (mapa actual)
             </label>
             <select
               className="input-neu w-full"
-              value={needElements}
+              value={String(needElements)}
               onChange={(e) => setNeedElements(e.target.value === "true")}
             >
               <option value="true">true</option>
               <option value="false">false</option>
             </select>
           </div>
+
           <div className="flex items-end">
             <div className="w-full">
-              <Button
-                disabled={busy}
-                onClick={() => setResult(null)}
-                className="w-full"
-              >
+              <Button disabled={busy} onClick={() => setResult(null)} className="w-full">
                 Limpiar resultado
               </Button>
             </div>
           </div>
+
           {busy && (
             <div className="flex items-end">
               <div className="w-full">
@@ -1887,9 +1767,10 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
         </div>
       </Card>
 
-      {/* Mapas */}
+      {/* Mapas y puntos */}
       <Card className="lg:col-span-12">
         <h2>Mapas y puntos</h2>
+
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           <div>
             <Button className="w-full" onClick={handleListMaps} disabled={busy}>
@@ -1897,11 +1778,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
             </Button>
           </div>
           <div>
-            <Button
-              className="w-full"
-              onClick={handleCurrentMap}
-              disabled={busy}
-            >
+            <Button className="w-full" onClick={handleCurrentMap} disabled={busy}>
               Mapa actual
             </Button>
           </div>
@@ -1933,20 +1810,12 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
 
         {mapsList.length > 0 &&
           renderTable(mapsList, [c("name", "name"), c("floor", "floor")])}
-
         {pointsList.length > 0 &&
-          renderTable(pointsList, [
-            c("name"),
-            c("type"),
-            c("x"),
-            c("y"),
-            c("z"),
-          ])}
+          renderTable(pointsList, [c("name"), c("type"), c("x"), c("y"), c("z")])}
 
         {currentMap && (
           <div className="mt-3 text-sm text-slate-600">
-            Mapa actual: <b>{currentMap?.name}</b> · piso:{" "}
-            <b>{currentMap?.floor}</b>{" "}
+            Mapa actual: <b>{currentMap?.name}</b> · piso: <b>{currentMap?.floor}</b>{" "}
             {Array.isArray(currentMap?.elements) && (
               <span>· elementos: {currentMap.elements.length}</span>
             )}
@@ -1957,11 +1826,10 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       {/* Llamadas */}
       <Card className="lg:col-span-12">
         <h2>Llamadas (custom_call)</h2>
+
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <div>
-            <label className="block text-sm text-slate-500">
-              call_device_name
-            </label>
+            <label className="block text-sm text-slate-500">call_device_name</label>
             <input
               className="input-neu w-full"
               value={callDeviceName}
@@ -1985,9 +1853,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
             />
           </div>
           <div>
-            <label className="block text-sm text-slate-500">
-              point_type (opcional)
-            </label>
+            <label className="block text-sm text-slate-500">point_type (opcional)</label>
             <input
               className="input-neu w-full"
               value={callPointType}
@@ -2015,16 +1881,16 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
             </Button>
           </div>
         </div>
+
         <div className="mt-3 grid grid-cols-1 gap-2">
-          <label className="block text-sm text-slate-500">
-            mode_data (JSON)
-          </label>
+          <label className="block text-sm text-slate-500">mode_data (JSON)</label>
           <textarea
             className="input-neu w-full h-36"
             value={modeData}
             onChange={(e) => setModeData(e.target.value)}
           />
         </div>
+
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
             <label className="block text-sm text-slate-500">task_id</label>
@@ -2035,28 +1901,19 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
             />
           </div>
           <div>
-            <Button
-              className="w-full"
-              onClick={handleCancelCall}
-              disabled={busy || !taskId}
-            >
+            <Button className="w-full" onClick={handleCancelCall} disabled={busy || !taskId}>
               Cancelar llamada
             </Button>
           </div>
           <div className="lg:col-span-2">
-            <Button
-              className="w-full"
-              onClick={handleCompleteCall}
-              disabled={busy || !taskId}
-            >
+            <Button className="w-full" onClick={handleCompleteCall} disabled={busy || !taskId}>
               Completar llamada
             </Button>
           </div>
         </div>
+
         <div className="mt-2 grid grid-cols-1 gap-2">
-          <label className="block text-sm text-slate-500">
-            next_call_task (JSON opcional)
-          </label>
+          <label className="block text-sm text-slate-500">next_call_task (JSON opcional)</label>
           <textarea
             className="input-neu w-full h-32"
             value={nextCallTask}
@@ -2068,31 +1925,20 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       {/* Energía / Puertas / Pantalla / Posición */}
       <Card className="lg:col-span-12">
         <h2>Robot · Energía, Puertas, Pantalla y Posición</h2>
+
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <div>
-            <Button
-              className="w-full"
-              onClick={handleRechargeV1}
-              disabled={busy}
-            >
+            <Button className="w-full" onClick={handleRechargeV1} disabled={busy}>
               Recargar (v1)
             </Button>
           </div>
           <div>
-            <Button
-              className="w-full"
-              onClick={handleRechargeV2}
-              disabled={busy}
-            >
+            <Button className="w-full" onClick={handleRechargeV2} disabled={busy}>
               Recargar (v2)
             </Button>
           </div>
           <div>
-            <Button
-              className="w-full"
-              onClick={handleDoorState}
-              disabled={busy}
-            >
+            <Button className="w-full" onClick={handleDoorState} disabled={busy}>
               Estado de puertas
             </Button>
           </div>
@@ -2108,7 +1954,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
             <label className="block text-sm text-slate-500">operation</label>
             <select
               className="input w-full"
-              value={doorOp}
+              value={String(doorOp)}
               onChange={(e) => setDoorOp(e.target.value === "true")}
             >
               <option value="true">abrir</option>
@@ -2116,11 +1962,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
             </select>
           </div>
           <div>
-            <Button
-              className="w-full"
-              onClick={handleControlDoors}
-              disabled={busy}
-            >
+            <Button className="w-full" onClick={handleControlDoors} disabled={busy}>
               Controlar puerta
             </Button>
           </div>
@@ -2128,9 +1970,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
 
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <div className="lg:col-span-3">
-            <label className="block text-sm text-slate-500">
-              screen.content
-            </label>
+            <label className="block text-sm text-slate-500">screen.content</label>
             <input
               className="input-neu w-full"
               value={screenContent}
@@ -2141,7 +1981,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
             <label className="block text-sm text-slate-500">screen.show</label>
             <select
               className="input w-full"
-              value={screenShow}
+              value={String(screenShow)}
               onChange={(e) => setScreenShow(e.target.value === "true")}
             >
               <option value="true">true</option>
@@ -2149,11 +1989,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
             </select>
           </div>
           <div className="lg:col-span-2">
-            <Button
-              className="w-full"
-              onClick={handleScreenSet}
-              disabled={busy}
-            >
+            <Button className="w-full" onClick={handleScreenSet} disabled={busy}>
               Actualizar pantalla
             </Button>
           </div>
@@ -2161,9 +1997,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
 
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           <div>
-            <label className="block text-sm text-slate-500">
-              pos.interval (s)
-            </label>
+            <label className="block text-sm text-slate-500">pos.interval (s)</label>
             <input
               className="input-neu w-full"
               value={posInterval}
@@ -2181,11 +2015,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
             />
           </div>
           <div className="lg:col-span-2">
-            <Button
-              className="w-full"
-              onClick={handlePositionCmd}
-              disabled={busy}
-            >
+            <Button className="w-full" onClick={handlePositionCmd} disabled={busy}>
               Enviar comando de posición
             </Button>
           </div>
@@ -2195,6 +2025,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       {/* Delivery / Transport */}
       <Card className="lg:col-span-12">
         <h2>Delivery / Transport</h2>
+
         <div className="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
             <h3 className="text-sm font-medium">delivery_task</h3>
@@ -2205,9 +2036,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
             />
             <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
-                <label className="block text-sm text-slate-500">
-                  delivery_action
-                </label>
+                <label className="block text-sm text-slate-500">delivery_action</label>
                 <select
                   className="input w-full"
                   value={deliveryAction}
@@ -2215,26 +2044,16 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
                 >
                   <option value="START">START</option>
                   <option value="COMPLETE">COMPLETE</option>
-                  <option value="CANCEL_ALL_DELIVERY">
-                    CANCEL_ALL_DELIVERY
-                  </option>
+                  <option value="CANCEL_ALL_DELIVERY">CANCEL_ALL_DELIVERY</option>
                 </select>
               </div>
               <div>
-                <Button
-                  className="w-full"
-                  onClick={handleDeliveryTask}
-                  disabled={busy}
-                >
+                <Button className="w-full" onClick={handleDeliveryTask} disabled={busy}>
                   Enviar delivery_task
                 </Button>
               </div>
               <div>
-                <Button
-                  className="w-full"
-                  onClick={handleDeliveryAction}
-                  disabled={busy}
-                >
+                <Button className="w-full" onClick={handleDeliveryAction} disabled={busy}>
                   Enviar delivery_action
                 </Button>
               </div>
@@ -2250,9 +2069,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
             />
             <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
-                <label className="block text-sm text-slate-500">
-                  transport_action
-                </label>
+                <label className="block text-sm text-slate-500">transport_action</label>
                 <select
                   className="input w-full"
                   value={transportAction}
@@ -2260,26 +2077,16 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
                 >
                   <option value="START">START</option>
                   <option value="COMPLETE">COMPLETE</option>
-                  <option value="CANCEL_ALL_DELIVERY">
-                    CANCEL_ALL_DELIVERY
-                  </option>
+                  <option value="CANCEL_ALL_DELIVERY">CANCEL_ALL_DELIVERY</option>
                 </select>
               </div>
               <div>
-                <Button
-                  className="w-full"
-                  onClick={handleTransportTask}
-                  disabled={busy}
-                >
+                <Button className="w-full" onClick={handleTransportTask} disabled={busy}>
                   Enviar transport_task
                 </Button>
               </div>
               <div>
-                <Button
-                  className="w-full"
-                  onClick={handleTransportAction}
-                  disabled={busy}
-                >
+                <Button className="w-full" onClick={handleTransportAction} disabled={busy}>
                   Enviar transport_action
                 </Button>
               </div>
@@ -2291,6 +2098,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       {/* Cancelar tareas / Estado / Grupos / Robots */}
       <Card className="lg:col-span-12">
         <h2>Gestión de tareas y estado</h2>
+
         <div className="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
             <h3 className="text-sm font-medium">Cancelar tareas</h3>
@@ -2301,20 +2109,12 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
             />
             <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
-                <Button
-                  className="w-full"
-                  onClick={handleCancelTask}
-                  disabled={busy}
-                >
+                <Button className="w-full" onClick={handleCancelTask} disabled={busy}>
                   Cancelar
                 </Button>
               </div>
               <div>
-                <Button
-                  className="w-full"
-                  onClick={handleRobotTaskState}
-                  disabled={busy}
-                >
+                <Button className="w-full" onClick={handleRobotTaskState} disabled={busy}>
                   Estado tarea actual
                 </Button>
               </div>
@@ -2325,11 +2125,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
             <h3 className="text-sm font-medium">Estado / Grupos / Robots</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
-                <Button
-                  className="w-full"
-                  onClick={handleStatusBySn}
-                  disabled={busy}
-                >
+                <Button className="w-full" onClick={handleStatusBySn} disabled={busy}>
                   Estado por SN
                 </Button>
               </div>
@@ -2342,19 +2138,12 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
                 />
               </div>
               <div>
-                <Button
-                  className="w-full"
-                  onClick={handleStatusByGroup}
-                  disabled={busy || !groupId}
-                >
+                <Button className="w-full" onClick={handleStatusByGroup} disabled={busy || !groupId}>
                   Estado por grupo
                 </Button>
               </div>
-
               <div>
-                <label className="block text-sm text-slate-500">
-                  device (para grupos)
-                </label>
+                <label className="block text-sm text-slate-500">device (para grupos)</label>
                 <input
                   className="input-neu w-full"
                   value={device}
@@ -2363,19 +2152,12 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
                 />
               </div>
               <div>
-                <Button
-                  className="w-full"
-                  onClick={handleGroupList}
-                  disabled={busy}
-                >
+                <Button className="w-full" onClick={handleGroupList} disabled={busy}>
                   Listar grupos
                 </Button>
               </div>
-
               <div>
-                <label className="block text-sm text-slate-500">
-                  group_id (robots)
-                </label>
+                <label className="block text-sm text-slate-500">group_id (robots)</label>
                 <input
                   className="input-neu w-full"
                   value={robotsGroupId}
@@ -2383,11 +2165,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
                 />
               </div>
               <div>
-                <Button
-                  className="w-full"
-                  onClick={handleRobotsByGroup}
-                  disabled={busy || !robotsGroupId}
-                >
+                <Button className="w-full" onClick={handleRobotsByGroup} disabled={busy || !robotsGroupId}>
                   Robots del grupo
                 </Button>
               </div>
@@ -2399,6 +2177,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
       {/* Tray orders / Agrupación / Door Capture / A2B */}
       <Card className="lg:col-span-12">
         <h2>Pedidos a bandejas · Agrupación de puntos · Door Capture · A2B</h2>
+
         <div className="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
             <h3 className="text-sm font-medium">Tray order</h3>
@@ -2408,19 +2187,13 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
               onChange={(e) => setTrayOrderPayload(e.target.value)}
             />
             <div className="mt-2">
-              <Button
-                className="w-full"
-                onClick={handleTrayOrder}
-                disabled={busy}
-              >
+              <Button className="w-full" onClick={handleTrayOrder} disabled={busy}>
                 Enviar tray_order
               </Button>
             </div>
 
             <div className="mt-4">
-              <h3 className="text-sm font-medium">
-                Agrupación de puntos (map tool)
-              </h3>
+              <h3 className="text-sm font-medium">Agrupación de puntos (map tool)</h3>
               <label className="block text-sm text-slate-500">map_name</label>
               <input
                 className="input-neu w-full"
@@ -2470,11 +2243,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
                 />
               </div>
               <div className="sm:col-span-3">
-                <Button
-                  className="w-full"
-                  onClick={handleDoorCapture}
-                  disabled={busy}
-                >
+                <Button className="w-full" onClick={handleDoorCapture} disabled={busy}>
                   Consultar Door Capture
                 </Button>
               </div>
@@ -2489,11 +2258,7 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
               />
               <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
-                  <Button
-                    className="w-full"
-                    onClick={handleErrandTask}
-                    disabled={busy}
-                  >
+                  <Button className="w-full" onClick={handleErrandTask} disabled={busy}>
                     Enviar A2B (task_errand)
                   </Button>
                 </div>
@@ -2543,6 +2308,9 @@ function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
   );
 }
 
+/* =========================
+ *  Componente principal: Apibella
+ * ========================= */
 export default function Apibella() {
   // Controles comunes
   const [shopId, setShopId] = useState("");
@@ -2578,7 +2346,43 @@ export default function Apibella() {
     return res;
   }
 
-  // Hooks por módulo (usan misma infraestructura)
+  // ===== Selector de tiendas (shop_id)
+  const [shops, setShops] = useState([]);
+  const [shopsLoading, setShopsLoading] = useState(false);
+  const [shopsErr, setShopsErr] = useState(null);
+  const [manualShopMode, setManualShopMode] = useState(false);
+
+  const loadShops = async () => {
+    try {
+      setShopsLoading(true);
+      setShopsErr(null);
+      const res = await get("/data-open-platform-service/v1/api/shop", {
+        limit: 100,
+        offset: 0,
+      });
+      const list = res?.data?.list || res?.list || [];
+      setShops(list);
+      // dejamos shopId vacío por defecto para consulta global
+    } catch (e) {
+      setShopsErr(e?.response?.data || e?.message || "Error cargando tiendas");
+    } finally {
+      setShopsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadShops();
+  }, []);
+
+  const selectShopValue = (() => {
+    if (manualShopMode) return "__manual__";
+    const exists = shops.some(
+      (s) => String(s.shop_id ?? s.id ?? "") === String(shopId)
+    );
+    return exists ? String(shopId) : String(shopId) || "";
+  })();
+
+  // ===== Hooks por módulo (usan misma infraestructura)
   const delivery = useModule({
     config: MODULES.delivery,
     startDate,
@@ -2671,46 +2475,21 @@ export default function Apibella() {
   });
 
   const tabs = [
-    {
-      key: "delivery",
-      label: "Delivery",
-      module: MODULES.delivery,
-      state: delivery,
-    },
+    { key: "delivery", label: "Delivery", module: MODULES.delivery, state: delivery },
     { key: "cruise", label: "Cruise", module: MODULES.cruise, state: cruise },
-    {
-      key: "greeter",
-      label: "Greeter",
-      module: MODULES.greeter,
-      state: greeter,
-    },
-    {
-      key: "interactive",
-      label: "Interactive",
-      module: MODULES.interactive,
-      state: interactive,
-    },
-    {
-      key: "solicit",
-      label: "Pick-up",
-      module: MODULES.solicit,
-      state: solicit,
-    },
+    { key: "greeter", label: "Greeter", module: MODULES.greeter, state: greeter },
+    { key: "interactive", label: "Interactive", module: MODULES.interactive, state: interactive },
+    { key: "solicit", label: "Pick-up", module: MODULES.solicit, state: solicit },
     { key: "grid", label: "Grid", module: MODULES.grid, state: grid },
     { key: "ad", label: "Advertising", module: MODULES.ad, state: ad },
-    {
-      key: "recovery",
-      label: "Recovery",
-      module: MODULES.recovery,
-      state: recovery,
-    },
+    { key: "recovery", label: "Recovery", module: MODULES.recovery, state: recovery },
     { key: "call", label: "Call", module: MODULES.call, state: call },
-    // Nueva pestaña: Operaciones
+    // Pestaña de operaciones con selector de robots dependiente de shopId
     { key: "ops", label: "Operaciones" },
   ];
-
   const [activeTab, setActiveTab] = useState(tabs[0].key);
-  const logicTabs = tabs.filter((t) => t.state); // solo los modulares para el spinner global
+
+  const logicTabs = tabs.filter((t) => t.state);
   const anyLoading = logicTabs.some(
     (t) => t.state.loadingSummary || t.state.loadingList
   );
@@ -2721,28 +2500,86 @@ export default function Apibella() {
         {/* Encabezado + Controles comunes */}
         <Card className="lg:col-span-12">
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <h2 className="min-w-0">
-              Machine task analysis · Distribution line
-            </h2>
+            <h2 className="min-w-0">Machine task analysis · Distribution line</h2>
             {anyLoading && <Spinner />}
           </div>
 
           <div className="mt-4 grid grid-cols-1 md:grid-cols-6 gap-3">
-            <div className="min-w-0">
-              <label className="block text-sm text-slate-500">
-                shop_id (opcional)
-              </label>
-              <input
-                className="input-neu w-full"
-                value={shopId}
-                onChange={(e) => setShopId(e.target.value)}
-                placeholder="Ej: 331300000"
-                inputMode="numeric"
-              />
-              <p className="text-xs mt-1">
-                Si lo dejas vacío, consulta global (según permisos).
-              </p>
+            {/* Selector de tienda */}
+            <div className="min-w-0 md:col-span-2">
+              <label className="block text-sm text-slate-500">Tienda (shop_id)</label>
+              <div className="flex flex-wrap gap-2">
+                <select
+                  className="input-neu w-full sm:flex-1"
+                  value={selectShopValue}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "__manual__") {
+                      setManualShopMode(true);
+                    } else {
+                      setManualShopMode(false);
+                      setShopId(v); // "" (todas) o un id
+                    }
+                  }}
+                  title="Selecciona una tienda"
+                >
+                  <option value="">— todas —</option>
+                  {shops.map((s) => {
+                    const id = String(s.shop_id ?? s.id ?? "");
+                    const name = s.shop_name || s.name || id;
+                    return (
+                      <option key={id} value={id}>
+                        {name} · {id}
+                      </option>
+                    );
+                  })}
+                  <option value="__manual__">Escribir shop_id</option>
+                </select>
+                <Button onClick={loadShops} disabled={shopsLoading} className="w-full sm:w-auto">
+                  {shopsLoading ? (
+                    <>
+                      <Spinner /> Actualizando…
+                    </>
+                  ) : (
+                    "Actualizar tiendas"
+                  )}
+                </Button>
+              </div>
+
+              {shopsErr && (
+                <div className="text-xs text-red-600 mt-1">
+                  {typeof shopsErr === "string" ? shopsErr : JSON.stringify(shopsErr)}
+                </div>
+              )}
+
+              {manualShopMode && (
+                <input
+                  className="input-neu w-full mt-2"
+                  value={shopId}
+                  onChange={(e) => setShopId(e.target.value)}
+                  placeholder="Ej: 331300000"
+                  inputMode="numeric"
+                />
+              )}
+
+              {!shopsLoading && !shopsErr && !!shops.length && (
+                <div className="text-xs text-foreground/60 mt-1">
+                  {shops.length} tiendas disponibles.
+                </div>
+              )}
+
+              {shopId && (
+                <p className="text-xs text-foreground/60 mt-1 break-all">
+                  Tienda actual: <span className="font-medium">{shopId}</span>
+                </p>
+              )}
+              {!shopId && (
+                <p className="text-xs text-foreground/60 mt-1">
+                  Sin tienda seleccionada: consultas globales (según permisos).
+                </p>
+              )}
             </div>
+
             <div className="min-w-0">
               <label className="block text-sm text-slate-500">Inicio</label>
               <input
@@ -2752,6 +2589,7 @@ export default function Apibella() {
                 onChange={(e) => setStartDate(e.target.value)}
               />
             </div>
+
             <div className="min-w-0">
               <label className="block text-sm text-slate-500">Fin</label>
               <input
@@ -2761,10 +2599,9 @@ export default function Apibella() {
                 onChange={(e) => setEndDate(e.target.value)}
               />
             </div>
+
             <div className="min-w-0">
-              <label className="block text-sm text-slate-500">
-                timezone_offset (h)
-              </label>
+              <label className="block text-sm text-slate-500">timezone_offset (h)</label>
               <input
                 className="input-neu w-full"
                 value={tzOffset}
@@ -2772,14 +2609,11 @@ export default function Apibella() {
                 placeholder="Ej: 8 para UTC+8"
                 inputMode="numeric"
               />
-              <p className="text-xs mt-1">
-                Rango: -12 a 14. Por defecto: tu zona.
-              </p>
+              <p className="text-xs mt-1">Rango: -12 a 14. Por defecto: tu zona.</p>
             </div>
+
             <div className="min-w-0">
-              <label className="block text-sm text-slate-500">
-                ad_id (opcional)
-              </label>
+              <label className="block text-sm text-slate-500">ad_id (opcional)</label>
               <input
                 className="input-neu w-full"
                 value={adId}
@@ -2836,9 +2670,7 @@ export default function Apibella() {
         onCancel={() => setAlertState(null)}
         solidBackdrop
       >
-        <div className="whitespace-pre-wrap break-words">
-          {alertState?.message}
-        </div>
+        <div className="whitespace-pre-wrap break-words">{alertState?.message}</div>
       </NeumorphicModal>
     </div>
   );
