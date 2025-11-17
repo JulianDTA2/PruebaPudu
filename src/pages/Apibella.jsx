@@ -1,4 +1,3 @@
-// Apibella.jsx — Parte 1/4
 import React, { useEffect, useMemo, useState } from "react";
 import { Card } from "../components/Card.jsx";
 import Button from "../components/Button.jsx";
@@ -6,11 +5,11 @@ import NeumorphicModal from "../components/NeumorphicModal.jsx";
 import { Pudu, get, post } from "../services/api.js";
 import JsonView from "../components/JsonView";
 
-/* =========================
- *  Constantes / Helpers
- * ========================= */
+/* ==========================================================================================
+ * CONSTANTES Y HELPERS
+ * ========================================================================================== */
 
-export const PRODUCT_IMAGES = {
+const PRODUCT_IMAGES = {
   bellabot:
     "https://cdn.pudutech.com/website/images/pc/bellabot/parameter2.2.0.png",
   cc1: "https://cdn.pudutech.com/website/images/cc1/parameters_robot_en.png",
@@ -20,87 +19,57 @@ export const PRODUCT_IMAGES = {
     "https://cdn.pudutech.com/official-website/flashbot_new/s16-tuya.webp",
 };
 
-/** Normaliza el nombre/código del producto para matchear el mapeo */
-export function normalizeProductName(raw) {
+function normalizeProductName(raw) {
   if (!raw) return null;
   const s = String(raw)
     .toLowerCase()
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-
-  // matches directos
   if (s === "bellabot" || s === "bella bot" || s === "bella") return "bellabot";
-  if (
-    s === "bellabot pro" ||
-    s === "bella bot pro" ||
-    s === "bellapro" ||
-    s === "bellabotpro"
-  )
-    return "bellabot pro";
-  if (s === "cc1") return "cc1";
-  if (s === "flashbot" || s === "flash bot") return "flashbot";
-
-  // heurísticas por inclusión
   if (s.includes("bellabot pro") || (s.includes("bella") && s.includes("pro")))
     return "bellabot pro";
   if (s.includes("bellabot") || s.includes("bella bot") || s === "bella")
     return "bellabot";
   if (s.includes("flash")) return "flashbot";
   if (s.includes("cc1")) return "cc1";
-
   return null;
 }
 
-/** Utils de tiempo/unidades */
-export const toUnixSec = (d) => Math.floor(new Date(d).getTime() / 1000);
-export const diffDays = (a, b) =>
+const toUnixSec = (d) => Math.floor(new Date(d).getTime() / 1000);
+const diffDays = (a, b) =>
   Math.max(0, Math.round((toUnixSec(b) - toUnixSec(a)) / 86400));
-export const getDefaultTzHours = () =>
+const getDefaultTzHours = () =>
   Math.round(-new Date().getTimezoneOffset() / 60);
-export const chooseUnit = (choice, startDate, endDate) =>
-  choice === "auto" ? (diffDays(startDate, endDate) > 1 ? "day" : "hour") : choice;
+const chooseUnit = (choice, startDate, endDate) =>
+  choice === "auto"
+    ? diffDays(startDate, endDate) > 1
+      ? "day"
+      : "hour"
+    : choice;
+const c = (key, label = key) => ({ key, label });
 
-/** Helper columnas para tablas */
-export const c = (key, label = key) => ({ key, label });
-
-/** Spinner compacto reutilizable */
-export function Spinner({ className = "" }) {
-  return (
-    <svg className={`animate-spin h-4 w-4 ${className}`} viewBox="0 0 24 24" aria-hidden="true">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4A4 4 0 008 12H4z" />
-    </svg>
-  );
+function Spinner({ className = "" }) {
+  return <div className={`spinner ${className}`} aria-hidden="true"></div>;
 }
 
-/** Tabla responsive (thead oculto en móvil + etiquetas por celda) */
-export const renderTable = (rows, columns) => (
-  <div className="mt-3 overflow-x-auto">
-    <table className="min-w-max w-full">
-      <thead className="hidden md:table-header-group">
+const renderTable = (rows, columns) => (
+  <div className="mt-3 table-wrap">
+    <table>
+      <thead>
         <tr>
           {columns.map((col) => (
-            <th
-              key={col.key}
-              className="px-3 py-2 text-left text-xs font-semibold text-slate-600 whitespace-nowrap"
-            >
-              {col.label}
-            </th>
+            <th key={col.key}>{col.label}</th>
           ))}
         </tr>
       </thead>
       <tbody>
         {rows.map((r, i) => (
-          <tr key={i} className="border-b last:border-0">
+          <tr key={i}>
             {columns.map((col) => (
-              <td key={col.key} className="px-3 py-2 align-top text-sm">
-                <span className="block md:hidden text-[10px] uppercase tracking-wide text-slate-400 mb-1">
-                  {col.label}
-                </span>
-                <div className="whitespace-nowrap md:whitespace-normal">
-                  {col.render ? col.render(r) : r[col.key] ?? 0}
-                </div>
+              <td key={col.key}>
+                <span className="cell-header">{col.label}</span>
+                <div>{col.render ? col.render(r) : r[col.key] ?? 0}</div>
               </td>
             ))}
           </tr>
@@ -110,11 +79,93 @@ export const renderTable = (rows, columns) => (
   </div>
 );
 
-export const MODULES = {
+/* ==========================================================================================
+ * COMPONENTE INTELIGENTE PARA RESULTADOS
+ * ========================================================================================== */
+const ResultViewer = ({ data }) => {
+  if (!data) return null;
+
+  let listData = null;
+  if (Array.isArray(data)) listData = data;
+  else if (data.list && Array.isArray(data.list)) listData = data.list;
+  else if (data.data && Array.isArray(data.data.list))
+    listData = data.data.list;
+
+  if (listData && listData.length > 0) {
+    const firstItem = listData[0];
+    if (typeof firstItem === "object" && firstItem !== null) {
+      const columns = Object.keys(firstItem).map((key) => ({
+        key,
+        label: key.replace(/_/g, " ").toUpperCase(),
+        render: (row) => {
+          const val = row[key];
+          if (typeof val === "object") return JSON.stringify(val);
+          return String(val);
+        },
+      }));
+      return (
+        <div>
+          <div className="text-xs text-gray-500 mb-2 font-bold uppercase">
+            Vista de Lista ({listData.length} items)
+          </div>
+          {renderTable(listData, columns)}
+        </div>
+      );
+    }
+  }
+
+  if (typeof data === "object" && data !== null && !Array.isArray(data)) {
+    const entries = Object.entries(data);
+    const isFlat = entries.every(
+      ([_, val]) => typeof val !== "object" || val === null
+    );
+
+    if (isFlat || entries.length < 15) {
+      return (
+        <div className="table-wrap mt-2">
+          <table style={{ width: "100%" }}>
+            <thead>
+              <tr>
+                <th style={{ width: "30%" }}>Campo</th>
+                <th>Valor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map(([key, val]) => (
+                <tr key={key}>
+                  <td className="font-bold text-xs uppercase text-gray-500">
+                    {key.replace(/_/g, " ")}
+                  </td>
+                  <td
+                    className="font-mono text-sm"
+                    style={{ color: "var(--accent-primary)" }}
+                  >
+                    {typeof val === "boolean"
+                      ? val
+                        ? "TRUE"
+                        : "FALSE"
+                      : String(val)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+  }
+
+  return <JsonView className="card-response" data={data} />;
+};
+
+/* ==========================================================================================
+ * CONFIGURACIÓN DE MÓDULOS
+ * ========================================================================================== */
+const MODULES = {
   delivery: {
     key: "delivery",
-    summaryTitle: "Resumen del período (Delivery)",
-    listTitle: "Detalle por robot/tienda (Delivery · paginado)",
+    summaryTitle: "Resumen (Delivery)",
+    listTitle: "Detalle (Delivery)",
     popupPrefix: "Delivery",
     pathSummary: "/data-board/v1/analysis/task/delivery",
     pathList: "/data-board/v1/analysis/task/delivery/paging",
@@ -122,17 +173,17 @@ export const MODULES = {
       const s = res?.summary || {};
       const q = res?.qoq || {};
       return [
-        { label: "Km operados", value: s.mileage ?? 0, prev: q.mileage },
-        { label: "Horas de operación", value: s.duration ?? 0, prev: q.duration },
-        { label: "Mesas entregadas", value: s.table_count ?? 0, prev: q.table_count },
+        { label: "Km", value: s.mileage ?? 0, prev: q.mileage },
+        { label: "Horas", value: s.duration ?? 0, prev: q.duration },
+        { label: "Mesas", value: s.table_count ?? 0, prev: q.table_count },
         { label: "Bandejas", value: s.tray_count ?? 0, prev: q.tray_count },
         { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
       ];
     },
     chartCols: [
       c("task_time"),
-      c("mileage", "mileage (km)"),
-      c("duration", "duration (h)"),
+      c("mileage", "km"),
+      c("duration", "h"),
       c("table_count"),
       c("tray_count"),
       c("task_count"),
@@ -141,542 +192,127 @@ export const MODULES = {
       c("task_time"),
       c("mileage"),
       c("duration"),
-      c("table_count", "table"),
-      c("tray_count", "tray"),
-      c("task_count", "tasks"),
+      c("table_count"),
+      c("tray_count"),
+      c("task_count"),
     ],
     listCols: {
       robot: [
         c("task_time"),
         c("sn"),
         c("robot_name"),
-        c("product_code"),
-        c("shop_name"),
         c("mileage"),
         c("duration"),
         c("table_count"),
         c("tray_count"),
         c("task_count"),
-        c("speed", "speed (m/s)"),
       ],
       shop: [
         c("task_time"),
-        c("shop_id"),
         c("shop_name"),
-        c("run_count"),
-        c("bind_count"),
         c("mileage"),
         c("duration"),
         c("table_count"),
         c("tray_count"),
         c("task_count"),
-        c("speed", "speed (m/s)"),
-        c("work_days"),
       ],
     },
   },
   cruise: {
     key: "cruise",
-    summaryTitle: "Machine mission analysis · Cruise mode",
-    listTitle: "Detalle por robot/tienda (Cruise · paginado)",
-    popupPrefix: "Cruise",
+    summaryTitle: "Cruise",
+    listTitle: "Cruise List",
     pathSummary: "/data-board/v1/analysis/task/cruise",
     pathList: "/data-board/v1/analysis/task/cruise/paging",
-    kpis: (res) => {
-      const s = res?.summary || {};
-      const q = res?.qoq || {};
-      return [
-        { label: "Km operados", value: s.mileage ?? 0, prev: q.mileage },
-        { label: "Horas de operación", value: s.duration ?? 0, prev: q.duration },
-        { label: "Interacciones", value: s.interactive_count ?? 0, prev: q.interactive_count },
-        { label: "Duración interacciones (h)", value: s.interactive_duration ?? 0, prev: q.interactive_duration },
-        { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
-      ];
-    },
-    chartCols: [
-      c("task_time"),
-      c("mileage", "mileage (km)"),
-      c("duration", "duration (h)"),
-      c("interactive_count"),
-      c("interactive_duration", "interactive_duration (h)"),
-      c("task_count"),
-    ],
-    qoqCols: [
-      c("task_time"),
-      c("mileage"),
-      c("duration"),
-      c("interactive_count"),
-      c("interactive_duration"),
-      c("task_count"),
-    ],
-    listCols: {
-      robot: [
-        c("task_time"),
-        c("sn"),
-        c("robot_name"),
-        c("product_code"),
-        c("shop_name"),
-        c("mileage"),
-        c("duration"),
-        c("interactive_count"),
-        c("interactive_duration"),
-        c("task_count", "tasks"),
-      ],
-      shop: [
-        c("task_time"),
-        c("shop_id"),
-        c("shop_name"),
-        c("run_count"),
-        c("bind_count"),
-        c("mileage"),
-        c("duration"),
-        c("interactive_count"),
-        c("interactive_duration"),
-        c("task_count", "tasks"),
-        c("work_days"),
-      ],
-    },
+    kpis: () => [],
+    chartCols: [],
+    qoqCols: [],
+    listCols: { robot: [], shop: [] },
   },
   greeter: {
     key: "greeter",
-    summaryTitle: "Machine task analysis · Lead mode (Greeter)",
-    listTitle: "Detalle por robot/tienda (Greeter · paginado)",
-    popupPrefix: "Greeter",
+    summaryTitle: "Greeter",
+    listTitle: "Greeter List",
     pathSummary: "/data-board/v1/analysis/task/greeter",
     pathList: "/data-board/v1/analysis/task/greeter/paging",
-    kpis: (res) => {
-      const s = res?.summary || {};
-      const q = res?.qoq || {};
-      return [
-        { label: "Km operados", value: s.mileage ?? 0, prev: q.mileage },
-        { label: "Horas de operación", value: s.duration ?? 0, prev: q.duration },
-        { label: "Destinos/Leads", value: s.destination_count ?? 0, prev: q.destination_count },
-        { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
-      ];
-    },
-    chartCols: [
-      c("task_time"),
-      c("mileage", "mileage (km)"),
-      c("duration", "duration (h)"),
-      c("destination_count"),
-      c("task_count"),
-    ],
-    qoqCols: [
-      c("task_time"),
-      c("mileage"),
-      c("duration"),
-      c("destination_count"),
-      c("task_count"),
-    ],
-    listCols: {
-      robot: [
-        c("task_time"),
-        c("sn"),
-        c("robot_name"),
-        c("product_code"),
-        c("shop_name"),
-        c("mileage"),
-        c("duration"),
-        c("destination_count"),
-        c("task_count"),
-      ],
-      shop: [
-        c("task_time"),
-        c("shop_id"),
-        c("shop_name"),
-        c("run_count"),
-        c("bind_count"),
-        c("mileage"),
-        c("duration"),
-        c("destination_count"),
-        c("task_count"),
-        c("work_days"),
-      ],
-    },
+    kpis: () => [],
+    chartCols: [],
+    qoqCols: [],
+    listCols: { robot: [], shop: [] },
   },
   interactive: {
     key: "interactive",
-    summaryTitle: "Interactive mode · resumen",
-    listTitle: "Detalle por robot/tienda (Interactive · paginado)",
-    popupPrefix: "Interactive",
+    summaryTitle: "Interactive",
+    listTitle: "Interactive List",
     pathSummary: "/data-board/v1/analysis/task/interactive",
     pathList: "/data-board/v1/analysis/task/interactive/paging",
-    kpis: (res) => {
-      const s = res?.summary || {};
-      const q = res?.qoq || {};
-      return [
-        { label: "Interacciones", value: s.interactive_count ?? 0, prev: q.interactive_count },
-        { label: "Voces", value: s.voice_count ?? 0, prev: q.voice_count },
-        { label: "Duración voz (h)", value: s.voice_duration ?? 0, prev: q.voice_duration },
-      ];
-    },
-    chartCols: [
-      c("task_time"),
-      c("interactive_count"),
-      c("voice_count"),
-      c("voice_duration", "voice_duration (h)"),
-    ],
-    qoqCols: [
-      c("task_time"),
-      c("interactive_count"),
-      c("voice_count"),
-      c("voice_duration", "voice_duration (h)"),
-    ],
-    listCols: {
-      robot: [
-        c("task_time"),
-        c("sn"),
-        c("robot_name"),
-        c("product_code"),
-        c("shop_name"),
-        c("interactive_count"),
-        c("voice_count"),
-        c("voice_duration", "voice_duration (h)"),
-      ],
-      shop: [
-        c("task_time"),
-        c("shop_id"),
-        c("shop_name"),
-        c("run_count"),
-        c("bind_count"),
-        c("interactive_count"),
-        c("voice_count"),
-        c("voice_duration", "voice_duration (h)"),
-        c("work_days"),
-      ],
-    },
+    kpis: () => [],
+    chartCols: [],
+    qoqCols: [],
+    listCols: { robot: [], shop: [] },
   },
   solicit: {
     key: "solicit",
-    summaryTitle: "Customer collection / Pick-up · resumen",
-    listTitle: "Detalle por robot/tienda (Pick-up · paginado)",
-    popupPrefix: "Pick-up",
+    summaryTitle: "Pick-up",
+    listTitle: "Pick-up List",
     pathSummary: "/data-board/v1/analysis/task/solicit",
     pathList: "/data-board/v1/analysis/task/solicit/paging",
-    kpis: (res) => {
-      const s = res?.summary || {};
-      const q = res?.qoq || {};
-      return [
-        { label: "Horas operación", value: s.duration ?? 0, prev: q.duration },
-        { label: "Saludos", value: s.play_count ?? 0, prev: q.play_count },
-        { label: "Alcance", value: s.attach_persons ?? 0, prev: q.attach_persons },
-        { label: "Atraídos", value: s.attract_persons ?? 0, prev: q.attract_persons },
-        { label: "Interacciones", value: s.interactive_count ?? 0, prev: q.interactive_count },
-        { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
-      ];
-    },
-    chartCols: [
-      c("task_time"),
-      c("duration", "duration (h)"),
-      c("play_count"),
-      c("attach_persons"),
-      c("attract_persons"),
-      c("interactive_count"),
-      c("task_count"),
-    ],
-    qoqCols: [
-      c("task_time"),
-      c("duration", "duration (h)"),
-      c("play_count"),
-      c("attach_persons"),
-      c("attract_persons"),
-      c("interactive_count"),
-      c("task_count"),
-    ],
-    listCols: {
-      robot: [
-        c("task_time"),
-        c("sn"),
-        c("robot_name"),
-        c("product_code"),
-        c("shop_name"),
-        c("duration", "duration (h)"),
-        c("play_count"),
-        c("attach_persons"),
-        c("attract_persons"),
-        c("interactive_count"),
-        c("task_count"),
-      ],
-      shop: [
-        c("task_time"),
-        c("shop_id"),
-        c("shop_name"),
-        c("run_count"),
-        c("bind_count"),
-        c("duration", "duration (h)"),
-        c("play_count"),
-        c("attach_persons"),
-        c("attract_persons"),
-        c("interactive_count"),
-        c("task_count"),
-        c("work_days"),
-      ],
-    },
+    kpis: () => [],
+    chartCols: [],
+    qoqCols: [],
+    listCols: { robot: [], shop: [] },
   },
   grid: {
     key: "grid",
-    summaryTitle: "Grid clicks · resumen",
-    listTitle: "Detalle por robot/tienda (Grid clicks · paginado)",
-    popupPrefix: "Grid",
+    summaryTitle: "Grid",
+    listTitle: "Grid List",
     pathSummary: "/data-board/v1/analysis/task/grid",
     pathList: "/data-board/v1/analysis/task/grid/paging",
-    kpis: (res) => {
-      const s = res?.summary || {};
-      const q = res?.qoq || {};
-      const pair = (k, l) => ({ label: l, value: s[k] ?? 0, prev: q[k] });
-      return [
-        pair("take_me_in_count", "Clicks: llévame dentro"),
-        pair("featured_item_count", "Clicks: destacados"),
-        pair("favorable_promotions_count", "Clicks: promos"),
-        pair("guide_to_menu_count", "Clicks: pick-up"),
-        pair("poster_count", "Clicks: póster"),
-        pair("usher_count", "Clicks: guía"),
-        pair("dance_count", "Clicks: baile"),
-        pair("video_poster_count", "Clicks: video"),
-      ];
-    },
-    chartCols: [
-      c("task_time"),
-      c("take_me_in_count"),
-      c("featured_item_count"),
-      c("favorable_promotions_count"),
-      c("guide_to_menu_count"),
-      c("poster_count"),
-      c("usher_count"),
-      c("dance_count"),
-      c("video_poster_count"),
-    ],
-    qoqCols: [
-      c("task_time"),
-      c("take_me_in_count"),
-      c("featured_item_count"),
-      c("favorable_promotions_count"),
-      c("guide_to_menu_count"),
-      c("poster_count"),
-      c("usher_count"),
-      c("dance_count"),
-      c("video_poster_count"),
-    ],
-    listCols: {
-      robot: [
-        c("task_time"),
-        c("sn"),
-        c("robot_name"),
-        c("product_code"),
-        c("shop_name"),
-        c("take_me_in_count"),
-        c("featured_item_count"),
-        c("favorable_promotions_count"),
-        c("guide_to_menu_count"),
-        c("poster_count"),
-        c("usher_count"),
-        c("dance_count"),
-        c("video_poster_count"),
-      ],
-      shop: [
-        c("task_time"),
-        c("shop_id"),
-        c("shop_name"),
-        c("run_count"),
-        c("bind_count"),
-        c("take_me_in_count"),
-        c("featured_item_count"),
-        c("favorable_promotions_count"),
-        c("guide_to_menu_count"),
-        c("poster_count"),
-        c("usher_count"),
-        c("dance_count"),
-        c("video_poster_count"),
-        c("work_days"),
-      ],
-    },
+    kpis: () => [],
+    chartCols: [],
+    qoqCols: [],
+    listCols: { robot: [], shop: [] },
   },
   ad: {
     key: "ad",
-    summaryTitle: "Advertising mode · resumen",
-    listTitle: "Detalle por robot/tienda (Advertising · paginado)",
-    popupPrefix: "Advertising",
+    summaryTitle: "Ad",
+    listTitle: "Ad List",
     pathSummary: "/data-board/v1/analysis/task/ad",
     pathList: "/data-board/v1/analysis/task/ad/paging",
-    includeAdId: true,
-    kpis: (res) => {
-      const s = res?.summary || {};
-      const q = res?.qoq || {};
-      const m = (label, val, prev) => ({ label, value: val ?? 0, prev });
-      return [
-        m("Tiny play (h)", s.tiny_play_duration, q?.tiny_play_duration),
-        m("Tiny plays", s.tiny_play_times, q?.tiny_play_times),
-        m("Big play (h)", s.big_play_duration, q?.big_play_duration),
-        m("Big plays", s.big_play_times, q?.big_play_times),
-      ];
-    },
-    chartCols: [
-      c("task_time"),
-      c("tiny_play_duration", "tiny_play_duration (h)"),
-      c("tiny_play_times"),
-      c("big_play_duration", "big_play_duration (h)"),
-      c("big_play_times"),
-    ],
-    qoqCols: [
-      c("task_time"),
-      c("tiny_play_duration", "tiny_play_duration (h)"),
-      c("tiny_play_times"),
-      c("big_play_duration", "big_play_duration (h)"),
-      c("big_play_times"),
-    ],
-    listCols: {
-      robot: [
-        c("task_time"),
-        c("sn"),
-        c("robot_name"),
-        c("product_code"),
-        c("shop_name"),
-        c("tiny_play_duration", "tiny_play_duration (h)"),
-        c("tiny_play_times"),
-        c("big_play_duration", "big_play_duration (h)"),
-        c("big_play_times"),
-      ],
-      shop: [
-        c("task_time"),
-        c("shop_id"),
-        c("shop_name"),
-        c("run_count"),
-        c("bind_count"),
-        c("tiny_play_duration", "tiny_play_duration (h)"),
-        c("tiny_play_times"),
-        c("big_play_duration", "big_play_duration (h)"),
-        c("big_play_times"),
-        c("work_days"),
-      ],
-    },
+    kpis: () => [],
+    chartCols: [],
+    qoqCols: [],
+    listCols: { robot: [], shop: [] },
   },
   recovery: {
     key: "recovery",
-    summaryTitle: "Return / Recovery mode · resumen",
-    listTitle: "Detalle por robot/tienda (Recovery · paginado)",
-    popupPrefix: "Recovery",
+    summaryTitle: "Recovery",
+    listTitle: "Recovery List",
     pathSummary: "/data-board/v1/analysis/task/recovery",
     pathList: "/data-board/v1/analysis/task/recovery/paging",
-    kpis: (res) => {
-      const s = res?.summary || {};
-      const q = res?.qoq || {};
-      return [
-        { label: "Km", value: s.mileage ?? 0, prev: q.mileage },
-        { label: "Horas", value: s.duration ?? 0, prev: q.duration },
-        { label: "Mesas", value: s.table_count ?? 0, prev: q.table_count },
-        { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
-      ];
-    },
-    chartCols: [
-      c("task_time"),
-      c("mileage", "mileage (km)"),
-      c("duration", "duration (h)"),
-      c("table_count"),
-      c("task_count"),
-    ],
-    qoqCols: [
-      c("task_time"),
-      c("mileage"),
-      c("duration"),
-      c("table_count"),
-      c("task_count"),
-    ],
-    listCols: {
-      robot: [
-        c("task_time"),
-        c("sn"),
-        c("robot_name"),
-        c("product_code"),
-        c("shop_name"),
-        c("mileage"),
-        c("duration"),
-        c("table_count"),
-        c("task_count"),
-        c("speed", "speed (m/s)"),
-      ],
-      shop: [
-        c("task_time"),
-        c("shop_id"),
-        c("shop_name"),
-        c("run_count"),
-        c("bind_count"),
-        c("mileage"),
-        c("duration"),
-        c("table_count"),
-        c("task_count"),
-        c("speed", "speed (m/s)"),
-        c("work_days"),
-      ],
-    },
+    kpis: () => [],
+    chartCols: [],
+    qoqCols: [],
+    listCols: { robot: [], shop: [] },
   },
   call: {
     key: "call",
-    summaryTitle: "Call pattern · resumen",
-    listTitle: "Detalle por robot/tienda (Call pattern · paginado)",
-    popupPrefix: "Call",
+    summaryTitle: "Call",
+    listTitle: "Call List",
     pathSummary: "/data-board/v1/analysis/task/call",
     pathList: "/data-board/v1/analysis/task/call/paging",
-    kpis: (res) => {
-      const s = res?.summary || {};
-      const q = res?.qoq || {};
-      return [
-        { label: "Km", value: s.mileage ?? 0, prev: q.mileage },
-        { label: "Horas", value: s.duration ?? 0, prev: q.duration },
-        { label: "Tareas", value: s.task_count ?? 0, prev: q.task_count },
-        { label: "Destinos", value: s.destination_count ?? 0, prev: q.destination_count },
-        { label: "Destinos completados", value: s.finished_destination_count ?? 0, prev: q.finished_destination_count },
-      ];
-    },
-    chartCols: [
-      c("task_time"),
-      c("mileage", "mileage (km)"),
-      c("duration", "duration (h)"),
-      c("task_count"),
-      c("destination_count"),
-      c("finished_destination_count"),
-    ],
-    qoqCols: [
-      c("task_time"),
-      c("mileage"),
-      c("duration"),
-      c("task_count"),
-      c("destination_count"),
-      c("finished_destination_count"),
-    ],
-    listCols: {
-      robot: [
-        c("task_time"),
-        c("sn"),
-        c("robot_name"),
-        c("product_code"),
-        c("shop_name"),
-        c("mileage"),
-        c("duration"),
-        c("task_count"),
-        c("destination_count"),
-        c("finished_destination_count"),
-      ],
-      shop: [
-        c("task_time"),
-        c("shop_id"),
-        c("shop_name"),
-        c("run_count"),
-        c("bind_count"),
-        c("mileage"),
-        c("duration"),
-        c("task_count"),
-        c("destination_count"),
-        c("finished_destination_count"),
-        c("work_days"),
-      ],
-    },
+    kpis: () => [],
+    chartCols: [],
+    qoqCols: [],
+    listCols: { robot: [], shop: [] },
   },
 };
 
-/* =========================
- *  Hook reutilizable por módulo
- * ========================= */
-export function useModule({
+/* ==========================================================================================
+ * HOOKS BASE
+ * ========================================================================================== */
+
+function useModule({
   config,
   startDate,
   endDate,
@@ -689,26 +325,25 @@ export function useModule({
   const [timeUnit, setTimeUnit] = useState("auto");
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [summaryRes, setSummaryRes] = useState(null);
-
-  const [listTimeUnit, setListTimeUnit] = useState("auto"); // auto | day | hour | all
-  const [groupBy, setGroupBy] = useState("robot"); // robot | shop
-  const [limit, setLimit] = useState(10); // 1..20
+  const [listTimeUnit, setListTimeUnit] = useState("auto");
+  const [groupBy, setGroupBy] = useState("robot");
+  const [limit, setLimit] = useState(10);
   const [offset, setOffset] = useState(0);
   const [loadingList, setLoadingList] = useState(false);
   const [listRes, setListRes] = useState(null);
 
   async function fetchSummary() {
+    if (!config.pathSummary) return;
     try {
       setLoadingSummary(true);
       setSummaryRes(null);
       const start = toUnixSec(startDate + "T00:00:00");
       const end = toUnixSec(endDate + "T23:59:59");
-      const chosenUnit = chooseUnit(timeUnit, startDate, endDate);
       const params = {
         start_time: start,
         end_time: end,
         timezone_offset: Number(tzOffset),
-        time_unit: chosenUnit,
+        time_unit: chooseUnit(timeUnit, startDate, endDate),
       };
       if (shopId) params.shop_id = shopId;
       if (config.includeAdId && adId) params.ad_id = Number(adId);
@@ -719,30 +354,29 @@ export function useModule({
       );
       setSummaryRes(data?.data || data);
     } catch (e) {
-      showError(e, `No se pudo obtener el análisis (${config.key})`);
+      showError(e, `Error análisis (${config.key})`);
     } finally {
       setLoadingSummary(false);
     }
   }
 
   async function fetchList(customOffset = null) {
+    if (!config.pathList) return;
     try {
       setLoadingList(true);
       const start = toUnixSec(startDate + "T00:00:00");
       const end = toUnixSec(endDate + "T23:59:59");
-      const chosenUnit = chooseUnit(listTimeUnit, startDate, endDate);
       const params = {
         start_time: start,
         end_time: end,
         timezone_offset: Number(tzOffset),
-        time_unit: chosenUnit,
+        time_unit: chooseUnit(listTimeUnit, startDate, endDate),
         group_by: listTimeUnit === "all" ? "shop" : groupBy,
         offset: customOffset ?? offset,
         limit: Number(limit),
       };
       if (shopId) params.shop_id = shopId;
       if (config.includeAdId && adId) params.ad_id = Number(adId);
-
       const data = await getWithPopup(
         `${config.popupPrefix} · lista`,
         config.pathList,
@@ -751,27 +385,19 @@ export function useModule({
       setListRes(data?.data || data);
       if (customOffset != null) setOffset(customOffset);
     } catch (e) {
-      showError(e, `No se pudo obtener la lista paginada (${config.key})`);
+      showError(e, `Error lista (${config.key})`);
     } finally {
       setLoadingList(false);
     }
   }
 
-  const clearSummary = () => setSummaryRes(null);
-  const clearList = () => {
-    setListRes(null);
-    setOffset(0);
-  };
-
   return {
-    // summary
     timeUnit,
     setTimeUnit,
     loadingSummary,
     summaryRes,
     fetchSummary,
-    clearSummary,
-    // list
+    clearSummary: () => setSummaryRes(null),
     listTimeUnit,
     setListTimeUnit,
     groupBy,
@@ -783,7 +409,10 @@ export function useModule({
     loadingList,
     listRes,
     fetchList,
-    clearList,
+    clearList: () => {
+      setListRes(null);
+      setOffset(0);
+    },
   };
 }
 
@@ -796,56 +425,37 @@ function SummarySection({ title, module, state }) {
     fetchSummary,
     clearSummary,
   } = state;
-
   const chart = summaryRes?.chart || [];
-  const qoqChart = summaryRes?.qoq_chart || [];
   const kpis = useMemo(() => module.kpis(summaryRes), [summaryRes, module]);
-
   return (
-    <Card className="lg:col-span-12">
+    <Card>
       <h2>{title}</h2>
-
-      <div className="mt-3 grid grid-cols-1 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mt-3">
         <div className="min-w-0">
-          <label className="block text-sm text-slate-500">time_unit</label>
+          <label className="block text-sm mb-1">Unit</label>
           <select
-            className="input w-full"
+            className="select-neu"
             value={timeUnit}
             onChange={(e) => setTimeUnit(e.target.value)}
           >
-            <option value="auto">auto</option>
-            <option value="day">day</option>
-            <option value="hour">hour</option>
+            <option value="auto">Auto</option>
+            <option value="day">Day</option>
+            <option value="hour">Hour</option>
           </select>
-          <p className="text-xs mt-1">auto: por día si &gt; 24h.</p>
         </div>
-
-        <div className="md:col-span-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div>
-              <Button
-                onClick={fetchSummary}
-                disabled={loadingSummary}
-                className="w-full"
-              >
-                {loadingSummary ? (
-                  <>
-                    <Spinner /> Consultando…
-                  </>
-                ) : (
-                  "Consultar"
-                )}
-              </Button>
-            </div>
-            <div>
-              <Button onClick={clearSummary} className="w-full">
-                Limpiar
-              </Button>
-            </div>
-          </div>
+        <div className="md:col-span-4 grid grid-cols-2 gap-2 items-end">
+          <Button
+            onClick={fetchSummary}
+            disabled={loadingSummary}
+            className="w-full btn-neu"
+          >
+            {loadingSummary ? <Spinner /> : "Consultar"}
+          </Button>
+          <Button onClick={clearSummary} className="w-full btn-neu">
+            Limpiar
+          </Button>
         </div>
       </div>
-
       {summaryRes && (
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           {kpis.map((k) => (
@@ -853,15 +463,13 @@ function SummarySection({ title, module, state }) {
               <div className="stat-label">{k.label}</div>
               <div className="stat-value">{k.value}</div>
               {k.prev != null && (
-                <div className="stat-hint">Periodo previo: {k.prev}</div>
+                <div className="stat-hint">Prev: {k.prev}</div>
               )}
             </div>
           ))}
         </div>
       )}
-
       {chart.length > 0 && renderTable(chart, module.chartCols)}
-      {qoqChart.length > 0 && renderTable(qoqChart, module.qoqCols)}
     </Card>
   );
 }
@@ -881,1460 +489,1515 @@ function ListSection({ title, module, state }) {
     fetchList,
     clearList,
   } = state;
-
-  const makePager = (res, offsetVal, limitVal) => {
-    const total = res?.total ?? 0;
-    const from = total ? offsetVal + 1 : 0;
-    const to = Math.min(offsetVal + Number(limitVal), total);
-    const list = res?.list || [];
-    return { total, from, to, list };
-  };
-
-  const { total, from, to, list } = makePager(listRes, offset, limit);
-
+  const { total, from, to, list } = (() => {
+    const t = listRes?.total ?? 0;
+    return {
+      total: t,
+      from: t ? offset + 1 : 0,
+      to: Math.min(offset + Number(limit), t),
+      list: listRes?.list || [],
+    };
+  })();
   return (
-    <Card className="lg:col-span-12">
+    <Card>
       <h2>{title}</h2>
-
       <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3">
-        <div className="min-w-0">
-          <label className="block text-sm text-slate-500">group_by</label>
+        <div>
+          <label className="block text-sm mb-1">Group</label>
           <select
-            className="input w-full"
+            className="select-neu"
             value={groupBy}
             onChange={(e) => setGroupBy(e.target.value)}
           >
-            <option value="robot">robot</option>
-            <option value="shop">shop</option>
+            <option value="robot">Robot</option>
+            <option value="shop">Shop</option>
           </select>
         </div>
-
-        <div className="min-w-0">
-          <label className="block text-sm text-slate-500">time_unit (list)</label>
+        <div>
+          <label className="block text-sm mb-1">Unit</label>
           <select
-            className="input w-full"
+            className="select-neu"
             value={listTimeUnit}
             onChange={(e) => setListTimeUnit(e.target.value)}
           >
-            <option value="auto">auto</option>
-            <option value="day">day</option>
-            <option value="hour">hour</option>
-            <option value="all">all</option>
+            <option value="auto">Auto</option>
+            <option value="day">Day</option>
+            <option value="hour">Hour</option>
+            <option value="all">All</option>
           </select>
-          <p className="text-xs mt-1">“all” solo con group_by=shop.</p>
         </div>
-
-        <div className="min-w-0">
-          <label className="block text-sm text-slate-500">limit</label>
+        <div>
+          <label className="block text-sm mb-1">Limit</label>
           <input
-            className="input-neu w-full"
+            className="input-neu"
             value={limit}
-            onChange={(e) =>
-              setLimit(Math.max(1, Math.min(20, Number(e.target.value) || 10)))
-            }
-            inputMode="numeric"
-            placeholder="1..20"
+            onChange={(e) => setLimit(Number(e.target.value))}
           />
         </div>
-
-        <div className="min-w-0">
-          <label className="block text-sm text-slate-500">offset</label>
+        <div>
+          <label className="block text-sm mb-1">Offset</label>
           <input
-            className="input-neu w-full"
+            className="input-neu"
             value={offset}
-            onChange={(e) => setOffset(Math.max(0, Number(e.target.value) || 0))}
-            inputMode="numeric"
+            onChange={(e) => setOffset(Number(e.target.value))}
           />
         </div>
-
-        <div className="lg:col-span-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 items-stretch">
-            <div>
-              <Button onClick={() => fetchList(0)} disabled={loadingList} className="w-full">
-                Consultar lista
-              </Button>
-            </div>
-            <div>
-              <Button onClick={clearList} className="w-full">Limpiar</Button>
-            </div>
-            {total > 0 && (
-              <div className="text-sm text-slate-500 flex items-center justify-center sm:justify-end">
-                Mostrando {from}-{to} de {total}
-              </div>
-            )}
-          </div>
+        <div className="lg:col-span-3 flex gap-2 items-end">
+          <Button
+            onClick={() => fetchList(0)}
+            disabled={loadingList}
+            className="flex-1 btn-neu"
+          >
+            Consultar
+          </Button>
+          <Button onClick={clearList} className="flex-1 btn-neu">
+            Limpiar
+          </Button>
         </div>
       </div>
-
       {list.length > 0 && renderTable(list, module.listCols[groupBy])}
-
       {total > 0 && (
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 items-stretch">
-          <div>
-            <Button
-              onClick={() => fetchList(Math.max(0, offset - Number(limit)))}
-              disabled={loadingList || offset === 0}
-              className="w-full"
-            >
-              ← Anterior
-            </Button>
-          </div>
-          <div>
-            <Button
-              onClick={() => fetchList(offset + Number(limit))}
-              disabled={loadingList || offset + Number(limit) >= total}
-              className="w-full"
-            >
-              Siguiente →
-            </Button>
-          </div>
-          <div className="text-sm text-slate-500 flex items-center justify-center sm:justify-start">
-            Página {Math.floor(offset / Number(limit)) + 1} · {from}-{to} de {total}
-          </div>
+        <div className="mt-4 flex justify-between items-center text-sm text-responsive">
+          <Button
+            onClick={() => fetchList(Math.max(0, offset - limit))}
+            disabled={loadingList || offset === 0}
+            className="btn-sm"
+          >
+            ← Prev
+          </Button>
+          <span>
+            {from}-{to} de {total}
+          </span>
+          <Button
+            onClick={() => fetchList(offset + limit)}
+            disabled={loadingList || offset + limit >= total}
+            className="btn-sm"
+          >
+            Next →
+          </Button>
         </div>
       )}
     </Card>
   );
 }
 
-/* =========================
- *  Navegación por pestañas
- * ========================= */
-function TabsNav({ tabs, activeKey, onChange }) {
-  const handleKeyDown = (e) => {
-    const idx = tabs.findIndex((t) => t.key === activeKey);
-    if (e.key === "ArrowRight") {
-      const next = tabs[(idx + 1) % tabs.length];
-      onChange(next.key);
-    } else if (e.key === "ArrowLeft") {
-      const prev = tabs[(idx - 1 + tabs.length) % tabs.length];
-      onChange(prev.key);
-    }
-  };
+/* ==========================================================================================
+ * COMPONENTES OPERACIONES
+ * ========================================================================================== */
+
+const RobotHeader = ({ state }) => {
+  const {
+    sn,
+    setSn,
+    robots,
+    robotsLoading,
+    manualSnMode,
+    setManualSnMode,
+    setResult,
+  } = state;
+  const selectedRobot = robots.find((r) => r.sn === sn);
+  const statusColor = sn ? "var(--accent-secondary)" : "var(--neu-text-muted)";
 
   return (
-    <div className="relative -mx-1">
-      <div className="overflow-x-auto px-1" onKeyDown={handleKeyDown}>
-        <div
-          role="tablist"
-          aria-label="Módulos"
-          className="min-w-full flex flex-nowrap gap-2 py-1"
-        >
-          {tabs.map((t) => {
-            const active = t.key === activeKey;
-            return (
-              <button
-                key={t.key}
-                id={`tab-${t.key}`}
-                role="tab"
-                aria-selected={active}
-                aria-controls={`panel-${t.key}`}
-                onClick={() => onChange(t.key)}
-                className={`btn-neu shrink-0 px-3 py-2 text-sm font-medium rounded-md border transition ${
-                  active
-                    ? "bg-slate-900 text-white border-slate-900"
-                    : "bg-white text-slate-600 hover:text-slate-900 border-slate-200"
-                }`}
-              >
-                {t.label}
-              </button>
-            );
-          })}
+    <div className="card-neu mb-6 flex flex-col md:flex-row gap-4 items-center justify-between">
+      <div className="flex items-center gap-4 w-full md:w-auto">
+        <div style={{ width: "60px", height: "60px" }}>
+          {selectedRobot?.img ? (
+            <img
+              src={selectedRobot.img}
+              alt="bot"
+              className="w-full h-full object-contain"
+            />
+          ) : (
+            <div
+              style={{
+                width: "45px",
+                height: "45px",
+                borderRadius: "50%",
+                backgroundColor: statusColor,
+                boxShadow: `0 0 10px ${statusColor}`,
+              }}
+            ></div>
+          )}
         </div>
+        <div className="flex-1 min-w-[200px]">
+          <label className="stat-label block">Robot Objetivo (SN)</label>
+          <div className="relative">
+            {!manualSnMode ? (
+              <select
+                className="select-neu"
+                value={sn}
+                onChange={(e) => {
+                  e.target.value === "__manual__"
+                    ? setManualSnMode(true)
+                    : setSn(e.target.value);
+                }}
+              >
+                <option value="">— Seleccionar Robot —</option>
+                {robots.map((r) => (
+                  <option key={r.sn} value={r.sn}>
+                    {r.label}
+                  </option>
+                ))}
+                <option value="__manual__">+ Manual Input</option>
+              </select>
+            ) : (
+              <div className="flex gap-2">
+                <input
+                  className="input-neu"
+                  placeholder="SN..."
+                  value={sn}
+                  onChange={(e) => setSn(e.target.value)}
+                  autoFocus
+                />
+                <button
+                  onClick={() => setManualSnMode(false)}
+                  className="btn-ghost text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="flex gap-2 w-full md:w-auto">
+        <Button
+          onClick={state.loadRobots}
+          disabled={robotsLoading}
+          className="btn-neu"
+        >
+          {robotsLoading ? "..." : "↻ Lista"}
+        </Button>
+        <Button onClick={() => setResult(null)} className="btn-neu">
+          Limpiar
+        </Button>
       </div>
     </div>
   );
-}
+};
 
-function TabPanel({ tabKey, activeKey, children }) {
-  const active = tabKey === activeKey;
+const CollapsibleJson = ({ label, value, onChange, height = "h-40" }) => {
+  const [open, setOpen] = useState(false);
   return (
-    <div
-      role="tabpanel"
-      id={`panel-${tabKey}`}
-      aria-labelledby={`tab-${tabKey}`}
-      hidden={!active}
-      className="contents"
-    >
-      {active && children}
+    <div className="card-neu-sm mb-4 p-0 overflow-hidden">
+      <button
+        className="w-full flex justify-between items-center p-3 bg-transparent cursor-pointer text-xs font-bold uppercase transition hover:opacity-80"
+        onClick={() => setOpen(!open)}
+      >
+        <div className="flex items-center gap-2">
+          <span className="badge">JSON</span>
+          <span>{label}</span>
+        </div>
+        <span>{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <textarea
+          className={`textarea-neu w-full font-mono text-xs ${height}`}
+          style={{
+            borderRadius: 0,
+            border: "none",
+            boxShadow: "var(--shadow-inset-sm)",
+          }}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          spellCheck={false}
+        />
+      )}
     </div>
   );
-}
+};
 
-/* (Opcional) Bloque JSON simple usado en algunas vistas */
-function JsonBlock({ data }) {
-  return (
-    <pre className="mt-3 p-3 bg-slate-50 rounded-md overflow-x-auto text-xs">
-      {data ? JSON.stringify(data, null, 2) : "// sin resultados"}
-    </pre>
-  );
-}
-
-function OperationsTab({ getWithPopup, postWithPopup, showError, shopId }) {
-  // Campos comunes
-  const [sn, setSn] = useState("");
-  const [needElements, setNeedElements] = useState(true);
-  const [limit, setLimit] = useState(10);
-  const [offset, setOffset] = useState(0);
+function useOperations({ getWithPopup, postWithPopup, showError, shopId }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
-
-  // Selector de robots (SN) — dependiente de shopId
-  const [robotsLoading, setRobotsLoading] = useState(false);
-  const [robotsErr, setRobotsErr] = useState(null);
+  const [sn, setSn] = useState("");
   const [robots, setRobots] = useState([]);
+  const [robotsLoading, setRobotsLoading] = useState(false);
   const [manualSnMode, setManualSnMode] = useState(false);
+  const run = async (fn) => {
+    try {
+      setBusy(true);
+      const d = await fn();
+      setResult(d?.data || d);
+      return d;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const parseJSON = (t) => {
+    try {
+      return t ? JSON.parse(t) : {};
+    } catch (e) {
+      showError(e, "JSON Error");
+      throw e;
+    }
+  };
 
-  async function loadRobots() {
+  const loadRobots = async () => {
     try {
       setRobotsLoading(true);
-      setRobotsErr(null);
       setRobots([]);
-
       const res = await Pudu.getRobots({ shop_id: shopId || undefined });
-      const list =
-        res?.data?.list ??
-        res?.list ??
-        res?.data?.data?.list ??
-        (Array.isArray(res) ? res : []);
-
-      const mapped = (Array.isArray(list) ? list : []).map((r) => {
-        const productRaw =
-          r?.product_code ??
-          r?.product ??
-          r?.productCode ??
-          r?.productType ??
-          r?.type ??
-          "-";
-        const snVal =
-          r?.sn ?? r?.device_sn ?? r?.robot_sn ?? r?.serial ?? r?.id ?? "-";
-        const productKey = normalizeProductName(productRaw);
-        const img = productKey ? PRODUCT_IMAGES[productKey] : null;
-        return {
-          productRaw,
-          productKey,
-          sn: snVal,
-          img,
-          label: `${productRaw} - ${snVal}`,
-        };
-      });
-
-      const seen = new Set();
-      const unique = mapped.filter((it) => {
-        const key = `${it.productKey || "x"}::${it.sn || it.label}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-
+      const list = Array.isArray(res?.data?.list || res?.list)
+        ? res.data?.list || res.list
+        : [];
+      const mapped = list.map((r) => ({
+        sn: r.sn || r.device_sn,
+        label: `${r.product_code || r.product || "-"} - ${r.sn || r.device_sn}`,
+        img: PRODUCT_IMAGES[normalizeProductName(r.product_code || r.product)],
+      }));
+      const unique = [
+        ...new Map(mapped.map((item) => [item.sn, item])).values(),
+      ];
       setRobots(unique);
-
-      // Autoseleccionar si hay solo uno
       if (unique.length === 1) {
         setManualSnMode(false);
         setSn(unique[0].sn);
       }
     } catch (e) {
-      setRobotsErr(e?.response?.data || e?.message || String(e));
     } finally {
       setRobotsLoading(false);
     }
-  }
-
-  // recargar lista al cambiar shopId
+  };
   useEffect(() => {
     loadRobots();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shopId]);
 
-  // Mapas / puntos
   const [mapName, setMapName] = useState("");
-  const [pointsList, setPointsList] = useState([]);
   const [mapsList, setMapsList] = useState([]);
   const [currentMap, setCurrentMap] = useState(null);
-
-  // Llamadas
-  const [callDeviceName, setCallDeviceName] = useState("appKey");
+  const [pointsList, setPointsList] = useState([]);
+  const [needElements, setNeedElements] = useState(true);
+  const [limit, setLimit] = useState(100);
+  const [offset, setOffset] = useState(0);
+  const [groupMapName, setGroupMapName] = useState("");
+  const [callDeviceName, setCallDeviceName] = useState("Llamada custom");
   const [callMapName, setCallMapName] = useState("");
   const [callPoint, setCallPoint] = useState("");
   const [callPointType, setCallPointType] = useState("");
   const [callMode, setCallMode] = useState("");
-  const [modeData, setModeData] = useState(
-    JSON.stringify(
-      {
-        urls: [],
-        switch_time: 2,
-        play_count: 1,
-        cancel_btn_time: 0,
-        show_timeout: 30,
-        qrcode: "",
-        text: "",
-      },
-      null,
-      2
-    )
-  );
   const [taskId, setTaskId] = useState("");
-  const [nextCallTask, setNextCallTask] = useState(
-    JSON.stringify(
-      {
-        map_name: "",
-        point: "",
-        point_type: "table",
-        call_device_name: "appKey",
-        call_mode: "",
-        mode_data: {},
-      },
-      null,
-      2
-    )
+  const [modeData, setModeData] = useState(
+    JSON.stringify({ urls: [], switch_time: 2, play_count: 1 }, null, 2)
   );
+  const [nextCallTask, setNextCallTask] = useState("{}");
+  const [activeTaskIds, setActiveTaskIds] = useState(() => {
+    try {
+      const stored = localStorage.getItem("pudu_task_history");
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    localStorage.setItem("pudu_task_history", JSON.stringify(activeTaskIds));
+  }, [activeTaskIds]);
 
-  // Puertas y pantalla
-  const [doorNumber, setDoorNumber] = useState("H_01");
+  const [selectedDoors, setSelectedDoors] = useState([]);
+  const toggleDoor = (door) => {
+    setSelectedDoors((prev) => {
+      if (prev.includes(door)) return prev.filter((d) => d !== door);
+      return [...prev, door];
+    });
+  };
+
   const [doorOp, setDoorOp] = useState(true);
-  const [screenContent, setScreenContent] = useState("content");
+  const [screenContent, setScreenContent] = useState("");
   const [screenShow, setScreenShow] = useState(true);
-
-  // Posición
   const [posInterval, setPosInterval] = useState(3);
   const [posTimes, setPosTimes] = useState(1);
-
-  // Delivery / Transport
   const [deliveryPayload, setDeliveryPayload] = useState(
     JSON.stringify(
       {
         type: "NEW",
         delivery_sort: "AUTO",
-        execute_task: false,
-        trays: [{ destinations: [{ points: "A1", id: "1111" }] }],
+        trays: [{ destinations: [{ points: "A1" }] }],
       },
       null,
       2
     )
   );
-  const [deliveryAction, setDeliveryAction] = useState("START"); // START | COMPLETE | CANCEL_ALL_DELIVERY
-
+  const [deliveryAction, setDeliveryAction] = useState("START");
   const [transportPayload, setTransportPayload] = useState(
-    JSON.stringify(
-      {
-        task_id: "",
-        type: "NEW",
-        delivery_sort: "AUTO",
-        execute_task: false,
-        start_point: { destination: "", content_type: "IMG", content_data: "" },
-        start_wait_time: 10,
-        end_wait_time: 10,
-        priority: 1,
-        trays: [
-          {
-            destinations: [
-              { points: "A1", id: "1111", name: "item", amount: 1 },
-            ],
-          },
-        ],
-      },
-      null,
-      2
-    )
+    JSON.stringify({ type: "NEW", trays: [] }, null, 2)
   );
   const [transportAction, setTransportAction] = useState("START");
-
-  // Cancel task
-  const [cancelTasksPayload, setCancelTasksPayload] = useState(
+  const [cancelPayload, setCancelPayload] = useState(
     JSON.stringify({ tasks: [{ name: "A1", type: "DIRECT" }] }, null, 2)
   );
-
-  // Estados / grupos / robots
   const [groupId, setGroupId] = useState("");
   const [device, setDevice] = useState("");
   const [robotsGroupId, setRobotsGroupId] = useState("");
-
-  // Door Capture
   const [doorCapturePid, setDoorCapturePid] = useState("");
-
-  // Tray order
   const [trayOrderPayload, setTrayOrderPayload] = useState(
     JSON.stringify(
-      {
-        orders: [
-          { table_no: "2", table_name: "A2", name: "Tea", amount: 1, id: "id-1" },
-        ],
-      },
+      { orders: [{ table_no: "2", name: "Tea", amount: 1 }] },
       null,
       2
     )
   );
-
-  // Grouping POST
-  const [groupMapName, setGroupMapName] = useState("");
-
-  // A2B (errand) + control
   const [errandPayload, setErrandPayload] = useState(
-    JSON.stringify(
-      {
-        auth: "0000",
-        tasks: [
-          {
-            task_name: "task 1",
-            task_desc: "desc",
-            point_list: [
-              {
-                map_name: "map 1",
-                map_code: "xxxx",
-                point: "front desk",
-                point_type: "table",
-                mobile: "",
-                verification_code: "",
-                remark: "",
-              },
-            ],
-          },
-        ],
-      },
-      null,
-      2
-    )
+    JSON.stringify({ auth: "0000", tasks: [] }, null, 2)
   );
   const [errandActionSession, setErrandActionSession] = useState("");
-  const [errandActionType, setErrandActionType] = useState("CANCEL"); // CANCEL | RETRY
+  const [errandActionType, setErrandActionType] = useState("CANCEL");
   const [errandActionAuth, setErrandActionAuth] = useState("");
 
-  // Helpers
-  const parseJSON = (txt, fallback = {}) => {
-    try {
-      const v = txt ? JSON.parse(txt) : fallback;
-      return v ?? fallback;
-    } catch (e) {
-      showError(e, "JSON inválido");
-      throw e;
-    }
+  const addTaskToHistory = (id, label = "") => {
+    if (!id) return;
+    const newTaskObj = { id, label, timestamp: Date.now() };
+    setActiveTaskIds((prev) => {
+      const filtered = prev.filter((t) => t.id !== id);
+      return [newTaskObj, ...filtered].slice(0, 15);
+    });
+    setTaskId(id);
   };
-
-  const run = async (fn) => {
-    try {
-      setBusy(true);
-      const data = await fn();
-      setResult(data?.data || data);
-      return data;
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // ==== Handlers ====
-  // Mapas
-  const handleListMaps = () =>
-    run(() =>
-      getWithPopup("Operaciones · Listar mapas", "/map-service/v1/open/list", {
-        sn,
-      }).then((r) => {
-        const list = r?.data?.list || r?.list || [];
-        setMapsList(list);
-        return r;
-      })
-    );
-
-  const handleCurrentMap = () =>
+  const handleRefreshTaskIds = () => {
     run(() =>
       getWithPopup(
-        "Operaciones · Mapa actual",
-        "/map-service/v1/open/current",
-        { sn, need_element: needElements }
-      ).then((r) => {
-        setCurrentMap(r?.data || r);
-        return r;
-      })
-    );
-
-  const handlePoints = () =>
-    run(() =>
-      getWithPopup("Operaciones · Puntos", "/map-service/v1/open/point", {
-        sn,
-        limit,
-        offset,
-      }).then((r) => {
-        const list = r?.data?.list || r?.list || [];
-        setPointsList(list);
-        return r;
-      })
-    );
-
-  // Llamadas
-  const handleCall = () =>
-    run(() =>
-      postWithPopup(
-        "Operaciones · Llamar",
-        "/open-platform-service/v1/custom_call",
-        {
-          sn,
-          map_name: callMapName,
-          point: callPoint,
-          point_type: callPointType || undefined,
-          call_device_name: callDeviceName,
-          call_mode: callMode || undefined,
-          mode_data: parseJSON(modeData, {}),
-        }
-      )
-    );
-
-  const handleCancelCall = () =>
-    run(() =>
-      postWithPopup(
-        "Operaciones · Cancelar llamada",
-        "/open-platform-service/v1/custom_call/cancel",
-        { task_id: taskId, call_device_name: callDeviceName }
-      )
-    );
-
-  const handleCompleteCall = () =>
-    run(() =>
-      postWithPopup(
-        "Operaciones · Completar llamada",
-        "/open-platform-service/v1/custom_call/complete",
-        {
-          task_id: taskId,
-          call_device_name: callDeviceName,
-          next_call_task: parseJSON(nextCallTask, undefined),
-        }
-      )
-    );
-
-  // Energía
-  const handleRechargeV1 = () =>
-    run(() =>
-      getWithPopup(
-        "Operaciones · Recargar (v1)",
-        "/open-platform-service/v1/recharge",
-        { sn }
-      )
-    );
-  const handleRechargeV2 = () =>
-    run(() =>
-      getWithPopup(
-        "Operaciones · Recargar (v2)",
-        "/open-platform-service/v2/recharge",
-        { sn }
-      )
-    );
-
-  // Puertas
-  const handleDoorState = () =>
-    run(() =>
-      getWithPopup(
-        "Operaciones · Estado de puertas",
-        "/open-platform-service/v1/door_state",
-        { sn }
-      )
-    );
-
-  const handleControlDoors = () =>
-    run(() =>
-      postWithPopup(
-        "Operaciones · Control de puertas",
-        "/open-platform-service/v1/control_doors",
-        {
-          sn,
-          payload: {
-            control_states: [{ door_number: doorNumber, operation: !!doorOp }],
-          },
-        }
-      )
-    );
-
-  // Pantalla
-  const handleScreenSet = () =>
-    run(() =>
-      postWithPopup(
-        "Operaciones · Pantalla",
-        "/open-platform-service/v1/robot/screen/set",
-        { sn, payload: { info: { content: screenContent, show: !!screenShow } } }
-      )
-    );
-
-  // Posición
-  const handlePositionCmd = () =>
-    run(() =>
-      postWithPopup(
-        "Operaciones · Comando de posición",
-        "/open-platform-service/v1/position_command",
-        {
-          sn,
-          payload: {
-            interval: Number(posInterval),
-            times: Number(posTimes) || 1,
-            source: "openAPI",
-          },
-        }
-      )
-    );
-
-  // Delivery
-  const handleDeliveryTask = () =>
-    run(() =>
-      postWithPopup(
-        "Operaciones · Delivery task",
-        "/open-platform-service/v1/delivery_task",
-        { sn, payload: parseJSON(deliveryPayload, {}) }
-      )
-    );
-  const handleDeliveryAction = () =>
-    run(() =>
-      postWithPopup(
-        "Operaciones · Delivery action",
-        "/open-platform-service/v1/delivery_action",
-        { sn, payload: { action: deliveryAction } }
-      )
-    );
-
-  // Transport
-  const handleTransportTask = () =>
-    run(() =>
-      postWithPopup(
-        "Operaciones · Transport task",
-        "/open-platform-service/v1/transport_task",
-        { sn, payload: parseJSON(transportPayload, {}) }
-      )
-    );
-  const handleTransportAction = () =>
-    run(() =>
-      postWithPopup(
-        "Operaciones · Transport action",
-        "/open-platform-service/v1/transport_action",
-        { sn, payload: { action: transportAction } }
-      )
-    );
-
-  // Map switch (ascensor)
-  const handleSwitchInElevator = () =>
-    run(() =>
-      postWithPopup(
-        "Operaciones · Cambiar mapa (ascensor)",
-        "/open-platform-service/v1/robot/map/switch_in_elevator",
-        {
-          sn,
-          payload: {
-            map: { name: mapName, floor: String(currentMap?.floor || "") },
-          },
-        }
-      )
-    );
-
-  // Cancel task
-  const handleCancelTask = () =>
-    run(() =>
-      postWithPopup(
-        "Operaciones · Cancelar tareas",
-        "/open-platform-service/v1/cancel_task",
-        { sn, payload: parseJSON(cancelTasksPayload, {}) }
-      )
-    );
-
-  // Estados
-  const handleStatusBySn = () =>
-    run(() =>
-      getWithPopup(
-        "Operaciones · Estado por SN",
-        "/open-platform-service/v1/status/get_by_sn",
-        { sn }
-      )
-    );
-  const handleStatusByGroup = () =>
-    run(() =>
-      getWithPopup(
-        "Operaciones · Estado por grupo",
-        "/open-platform-service/v1/status/get_by_group_id",
-        { group_id: groupId }
-      )
-    );
-
-  // Grupos y robots
-  const handleGroupList = () =>
-    run(() =>
-      getWithPopup(
-        "Operaciones · Grupos vinculados",
-        "/open-platform-service/v1/robot/group/list",
-        { device: device || undefined, shop_id: shopId || undefined }
-      )
-    );
-
-  const handleRobotsByGroup = () =>
-    run(() =>
-      getWithPopup(
-        "Operaciones · Robots por grupo",
-        "/open-platform-service/v1/robot/list_by_device_and_group",
-        { group_id: robotsGroupId }
-      )
-    );
-
-  // Estado de tarea actual
-  const handleRobotTaskState = () =>
-    run(() =>
-      getWithPopup(
-        "Operaciones · Estado de tarea en ejecución",
+        "Estado Tarea",
         "/open-platform-service/v1/robot/task/state/get",
         { sn }
-      )
+      ).then((r) => {
+        const data = r?.data || r;
+        if (data && data.task_id) {
+          addTaskToHistory(
+            data.task_id,
+            `[ACTIVA] ${new Date().toLocaleTimeString()}`
+          );
+        } else {
+          console.log("Robot Idle, no active task found.");
+        }
+        return r;
+      })
     );
-
-  // Tray order
-  const handleTrayOrder = () =>
-    run(() =>
-      postWithPopup(
-        "Operaciones · Tray order",
-        "/open-platform-service/v1/tray_order",
-        { sn, payload: parseJSON(trayOrderPayload, {}) }
-      )
+  };
+  const performCall = () => {
+    return run(() =>
+      postWithPopup("Llamar", "/open-platform-service/v1/custom_call", {
+        sn,
+        map_name: callMapName,
+        point: callPoint,
+        point_type: callPointType || undefined,
+        call_device_name: callDeviceName,
+        call_mode: callMode || undefined,
+        mode_data: parseJSON(modeData),
+      }).then((r) => {
+        const data = r?.data || r;
+        if (data && data.task_id) {
+          addTaskToHistory(
+            data.task_id,
+            `[NUEVA] ${new Date().toLocaleTimeString()}`
+          );
+        }
+        return r;
+      })
     );
-
-  // Agrupación de puntos
-  const handlePointGrouping = () =>
+  };
+  const handlePointsWithMap = () => {
+    const queryParams = { sn, limit, offset };
+    if (callMapName) queryParams.map_name = callMapName;
     run(() =>
-      postWithPopup(
-        "Operaciones · Agrupación de puntos",
-        "/map-service/v1/open/group",
-        { sn, map_name: groupMapName }
-      )
-    );
-
-  // Door Capture (ajusta endpoint si tu API usa otro)
-  const handleDoorCapture = () =>
-    run(() =>
-      getWithPopup(
-        "Operaciones · Door Capture",
-        "/open-platform-service/v1/door_capture/list",
-        {
-          pid: doorCapturePid || sn,
-          limit: Number(limit) || 10,
-          offset: Number(offset) || 0,
+      getWithPopup("Puntos", "/map-service/v1/open/point", queryParams).then(
+        (r) => {
+          const rawList = r?.data?.list || r?.list || [];
+          const normalizedList = rawList.map((p) => ({
+            ...p,
+            map_name:
+              p.map_name ||
+              p.mapName ||
+              (callMapName ? callMapName : "unknown"),
+          }));
+          setPointsList(normalizedList);
+          return r;
         }
       )
     );
-
-  // A2B (errand) + control
-  const handleErrandTask = () =>
-    run(() =>
+  };
+  const handleControlDoors = (explicitOp) => {
+    const op = typeof explicitOp === "boolean" ? explicitOp : doorOp;
+    if (selectedDoors.length === 0) {
+      showError({ message: "Selecciona al menos una puerta" }, "Error");
+      return;
+    }
+    const control_states = selectedDoors.map((door) => ({
+      door_number: door,
+      operation: !!op,
+    }));
+    return run(() =>
       postWithPopup(
-        "Operaciones · A2B (errand)",
-        "/open-platform-service/v1/task_errand",
-        { sn, payload: parseJSON(errandPayload, {}) }
+        "Control Puerta",
+        "/open-platform-service/v1/control_doors",
+        { sn, payload: { control_states } }
       )
     );
-  const handleErrandAction = () =>
-    run(() =>
-      postWithPopup(
-        "Operaciones · A2B control",
-        "/open-platform-service/v1/errand_action",
-        {
+  };
+
+  return {
+    busy,
+    result,
+    setResult,
+    sn,
+    setSn,
+    robots,
+    robotsLoading,
+    manualSnMode,
+    setManualSnMode,
+    loadRobots,
+    mapName,
+    setMapName,
+    mapsList,
+    currentMap,
+    pointsList,
+    needElements,
+    setNeedElements,
+    limit,
+    setLimit,
+    offset,
+    setOffset,
+    callDeviceName,
+    setCallDeviceName,
+    callMapName,
+    setCallMapName,
+    callPoint,
+    setCallPoint,
+    callPointType,
+    setCallPointType,
+    callMode,
+    setCallMode,
+    taskId,
+    setTaskId,
+    modeData,
+    setModeData,
+    nextCallTask,
+    setNextCallTask,
+    activeTaskIds,
+    handleRefreshTaskIds,
+    selectedDoors,
+    toggleDoor,
+    doorOp,
+    setDoorOp,
+    screenContent,
+    setScreenContent,
+    screenShow,
+    setScreenShow,
+    posInterval,
+    setPosInterval,
+    posTimes,
+    setPosTimes,
+    deliveryPayload,
+    setDeliveryPayload,
+    deliveryAction,
+    setDeliveryAction,
+    transportPayload,
+    setTransportPayload,
+    transportAction,
+    setTransportAction,
+    cancelPayload,
+    setCancelPayload,
+    groupId,
+    setGroupId,
+    device,
+    setDevice,
+    robotsGroupId,
+    setRobotsGroupId,
+    doorCapturePid,
+    setDoorCapturePid,
+    trayOrderPayload,
+    setTrayOrderPayload,
+    errandPayload,
+    setErrandPayload,
+    errandActionSession,
+    setErrandActionSession,
+    errandActionType,
+    setErrandActionType,
+    errandActionAuth,
+    setErrandActionAuth,
+    groupMapName,
+    setGroupMapName,
+    handleListMaps: () =>
+      run(() =>
+        getWithPopup("Mapas", "/map-service/v1/open/list", { sn }).then((r) => {
+          setMapsList(r?.data?.list || r?.list || []);
+          return r;
+        })
+      ),
+    handleCurrentMap: () =>
+      run(() =>
+        getWithPopup("Mapa Actual", "/map-service/v1/open/current", {
+          sn,
+          need_element: needElements,
+        }).then((r) => {
+          setCurrentMap(r?.data || r);
+          return r;
+        })
+      ),
+    handlePoints: handlePointsWithMap,
+    handleSwitchInElevator: () =>
+      run(() =>
+        postWithPopup(
+          "Elevator Switch",
+          "/open-platform-service/v1/robot/map/switch_in_elevator",
+          {
+            sn,
+            payload: {
+              map: { name: mapName, floor: String(currentMap?.floor || "") },
+            },
+          }
+        )
+      ),
+    handleCall: performCall,
+    handleCancelCall: () =>
+      run(() =>
+        postWithPopup(
+          "Cancelar Llamada",
+          "/open-platform-service/v1/custom_call/cancel",
+          { task_id: taskId, call_device_name: callDeviceName }
+        )
+      ),
+    handleCompleteCall: () =>
+      run(() =>
+        postWithPopup(
+          "Completar Llamada",
+          "/open-platform-service/v1/custom_call/complete",
+          {
+            task_id: taskId,
+            call_device_name: callDeviceName,
+            next_call_task: parseJSON(nextCallTask),
+          }
+        )
+      ),
+    handleRechargeV1: () =>
+      run(() =>
+        getWithPopup("Recarga V1", "/open-platform-service/v1/recharge", { sn })
+      ),
+    handleRechargeV2: () =>
+      run(() =>
+        getWithPopup("Recarga V2", "/open-platform-service/v2/recharge", { sn })
+      ),
+    handleDoorState: () =>
+      run(() =>
+        getWithPopup("Estado Puerta", "/open-platform-service/v1/door_state", {
+          sn,
+        })
+      ),
+    handleControlDoors,
+    handleScreenSet: () =>
+      run(() =>
+        postWithPopup(
+          "Pantalla",
+          "/open-platform-service/v1/robot/screen/set",
+          {
+            sn,
+            payload: { info: { content: screenContent, show: !!screenShow } },
+          }
+        )
+      ),
+    handlePositionCmd: () =>
+      run(() =>
+        postWithPopup(
+          "Posición",
+          "/open-platform-service/v1/position_command",
+          {
+            sn,
+            payload: {
+              interval: Number(posInterval),
+              times: Number(posTimes),
+              source: "openAPI",
+            },
+          }
+        )
+      ),
+    handleDeliveryTask: () =>
+      run(() =>
+        postWithPopup(
+          "Delivery Task",
+          "/open-platform-service/v1/delivery_task",
+          { sn, payload: parseJSON(deliveryPayload) }
+        )
+      ),
+    handleDeliveryAction: () =>
+      run(() =>
+        postWithPopup(
+          "Delivery Action",
+          "/open-platform-service/v1/delivery_action",
+          { sn, payload: { action: deliveryAction } }
+        )
+      ),
+    handleTransportTask: () =>
+      run(() =>
+        postWithPopup(
+          "Transport Task",
+          "/open-platform-service/v1/transport_task",
+          { sn, payload: parseJSON(transportPayload) }
+        )
+      ),
+    handleTransportAction: () =>
+      run(() =>
+        postWithPopup(
+          "Transport Action",
+          "/open-platform-service/v1/transport_action",
+          { sn, payload: { action: transportAction } }
+        )
+      ),
+    handleCancelTask: () =>
+      run(() =>
+        postWithPopup(
+          "Cancelar Tareas",
+          "/open-platform-service/v1/cancel_task",
+          { sn, payload: parseJSON(cancelPayload) }
+        )
+      ),
+    handleStatusBySn: () =>
+      run(() =>
+        getWithPopup(
+          "Status SN",
+          "/open-platform-service/v1/status/get_by_sn",
+          { sn }
+        )
+      ),
+    handleStatusByGroup: () =>
+      run(() =>
+        getWithPopup(
+          "Status Group",
+          "/open-platform-service/v1/status/get_by_group_id",
+          { group_id: groupId }
+        )
+      ),
+    handleGroupList: () =>
+      run(() =>
+        getWithPopup(
+          "List Groups",
+          "/open-platform-service/v1/robot/group/list",
+          { device: device || undefined, shop_id: shopId || undefined }
+        )
+      ),
+    handleRobotsByGroup: () =>
+      run(() =>
+        getWithPopup(
+          "Robots Group",
+          "/open-platform-service/v1/robot/list_by_device_and_group",
+          { group_id: robotsGroupId }
+        )
+      ),
+    handleRobotTaskState: () =>
+      run(() =>
+        getWithPopup(
+          "Estado Tarea",
+          "/open-platform-service/v1/robot/task/state/get",
+          { sn }
+        )
+      ),
+    handleTrayOrder: () =>
+      run(() =>
+        postWithPopup("Tray Order", "/open-platform-service/v1/tray_order", {
+          sn,
+          payload: parseJSON(trayOrderPayload),
+        })
+      ),
+    handlePointGrouping: () =>
+      run(() =>
+        postWithPopup("Agrupar Puntos", "/map-service/v1/open/group", {
+          sn,
+          map_name: groupMapName,
+        })
+      ),
+    handleDoorCapture: () =>
+      run(() =>
+        getWithPopup(
+          "Door Capture",
+          "/open-platform-service/v1/door_capture/list",
+          { pid: doorCapturePid || sn, limit, offset }
+        )
+      ),
+    handleErrandTask: () =>
+      run(() =>
+        postWithPopup("A2B Task", "/open-platform-service/v1/task_errand", {
+          sn,
+          payload: parseJSON(errandPayload),
+        })
+      ),
+    handleErrandAction: () =>
+      run(() =>
+        postWithPopup("A2B Action", "/open-platform-service/v1/errand_action", {
           sn,
           payload: {
             session_id: errandActionSession,
             action: errandActionType,
             auth: errandActionAuth || undefined,
           },
-        }
-      )
+        })
+      ),
+  };
+}
+
+function OperationsTab(props) {
+  const ops = useOperations(props);
+  const [activeSection, setActiveSection] = useState("General");
+  const sections = [
+    //{ id: "General", label: "Estado/Grupos" },
+    { id: "Mapas", label: "Mapas/Puntos" },
+    { id: "Llamadas", label: "Llamadas" },
+    { id: "Hardware", label: "Hardware" },
+    { id: "Tareas", label: "Tareas(Avanzado)" },
+    { id: "Avanzado", label: "Avanzado" },
+  ];
+
+  const mapOptions = useMemo(
+    () => ops.mapsList.map((m) => ({ label: m.name, value: m.name })),
+    [ops.mapsList]
+  );
+  const pointOptions = useMemo(() => {
+    if (!ops.callMapName)
+      return ops.pointsList.map((p) => ({
+        label: `${p.name} (${p.map_name})`,
+        value: p.name,
+      }));
+    return ops.pointsList
+      .filter((p) => p.map_name === ops.callMapName)
+      .map((p) => ({ label: p.name, value: p.name }));
+  }, [ops.pointsList, ops.callMapName]);
+  const typeOptions = useMemo(() => {
+    const filteredPoints = !ops.callMapName
+      ? ops.pointsList
+      : ops.pointsList.filter((p) => p.map_name === ops.callMapName);
+    const types = [
+      ...new Set(filteredPoints.map((p) => p.type).filter(Boolean)),
+    ];
+    return types.map((t) => ({ label: t, value: t }));
+  }, [ops.pointsList, ops.callMapName]);
+
+  const availableDoors = ["H_01", "H_02", "H_03", "H_04"];
+
+  // RESPONSIVE NAV (Dropdown on mobile, Sidebar on desktop)
+  function SideNav({ tabs, activeKey, onChange }) {
+    return (
+      <div className="mb-6 lg:mb-0">
+        <div className="block lg:hidden">
+          <label
+            className="text-xs font-bold mb-2 block"
+            style={{ color: "var(--neu-text-muted)" }}
+          >
+            Sección
+          </label>
+          <select
+            className="select-neu w-full"
+            value={activeKey}
+            onChange={(e) => onChange(e.target.value)}
+          >
+            {tabs.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="hidden lg:flex card-neu p-0 overflow-hidden sticky top-20">
+          <div className="flex flex-col w-full">
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => onChange(t.id)}
+                className={`nav-item w-full text-left flex items-center gap-3 ${
+                  t.id === activeKey ? "active" : ""
+                }`}
+              >
+                <span>{t.icon}</span>
+                <span>{t.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
     );
+  }
 
-  // ===== UI =====
   return (
-    <>
-      {/* Controles comunes */}
-      <Card className="lg:col-span-12">
-        <h2>Operaciones · Controles comunes</h2>
+    <div className="fade-in">
+      <RobotHeader state={ops} />
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <div className="lg:col-span-3">
+          <SideNav
+            tabs={sections}
+            activeKey={activeSection}
+            onChange={setActiveSection}
+          />
+        </div>
 
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-          <div className="min-w-0">
-            <label className="block text-sm text-slate-500">sn (robot)</label>
-            <div className="flex flex-wrap gap-2">
-              <select
-                className="input-neu w-full sm:flex-1"
-                value={
-                  manualSnMode
-                    ? "__manual__"
-                    : robots.find((r) => r.sn === sn)
-                    ? sn
-                    : ""
-                }
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (v === "__manual__") {
-                    setManualSnMode(true);
-                  } else {
-                    setManualSnMode(false);
-                    setSn(v);
-                  }
-                }}
-                title="Selecciona un robot por SN"
-              >
-                <option value="">— seleccionar SN —</option>
-                {robots.map((r) => (
-                  <option key={r.sn} value={r.sn}>
-                    {r.sn} · {r.productRaw}
-                  </option>
-                ))}
-                <option value="__manual__">Escribir SN</option>
-              </select>
+        <div className="lg:col-span-9 space-y-6">
+          {activeSection === "General" && (
+            <div className="space-y-4 fade-in">
+              <Card>
+                <h2 className="mb-4">Consultas de Estado</h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <Button
+                    onClick={ops.handleStatusBySn}
+                    disabled={ops.busy}
+                    className="btn-neu w-full"
+                  >
+                    Estado (SN)
+                  </Button>
+                  <Button
+                    onClick={ops.handleRobotTaskState}
+                    disabled={ops.busy}
+                    className="btn-neu w-full"
+                  >
+                    Tarea Actual
+                  </Button>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <input
+                    className="input-neu"
+                    placeholder="Group ID"
+                    value={ops.groupId}
+                    onChange={(e) => ops.setGroupId(e.target.value)}
+                  />
+                  <input
+                    className="input-neu"
+                    placeholder="Device ID"
+                    value={ops.device}
+                    onChange={(e) => ops.setDevice(e.target.value)}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3 mt-4">
+                  <Button
+                    onClick={ops.handleStatusByGroup}
+                    disabled={ops.busy || !ops.groupId}
+                    className="btn-neu"
+                  >
+                    Estado Grupo
+                  </Button>
+                  <Button
+                    onClick={ops.handleGroupList}
+                    disabled={ops.busy}
+                    className="btn-neu"
+                  >
+                    Listar Grupos
+                  </Button>
+                </div>
+              </Card>
+              <Card>
+                <h2 className="mb-2">Robots por Grupo</h2>
+                <div className="flex gap-2">
+                  <input
+                    className="input-neu flex-1"
+                    placeholder="Group ID"
+                    value={ops.robotsGroupId}
+                    onChange={(e) => ops.setRobotsGroupId(e.target.value)}
+                  />
+                  <Button
+                    onClick={ops.handleRobotsByGroup}
+                    disabled={ops.busy || !ops.robotsGroupId}
+                    className="btn-neu"
+                  >
+                    Listar
+                  </Button>
+                </div>
+              </Card>
+            </div>
+          )}
 
-              <Button
-                onClick={loadRobots}
-                disabled={robotsLoading}
-                className="w-full sm:w-auto"
-              >
-                {robotsLoading ? (
-                  <>
-                    <Spinner /> Actualizando…
-                  </>
-                ) : (
-                  "Actualizar lista"
+          {activeSection === "Mapas" && (
+            <div className="space-y-4 fade-in">
+              <Card>
+                <div className="flex justify-between items-center mb-4">
+                  <h2>Mapas</h2>
+                  <div className="flex items-center gap-2">
+                    <span className="stat-label">Detalles</span>
+                    <select
+                      className="select-neu py-1"
+                      value={String(ops.needElements)}
+                      onChange={(e) =>
+                        ops.setNeedElements(e.target.value === "true")
+                      }
+                    >
+                      <option value="true">Sí</option>
+                      <option value="false">No</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                  <Button
+                    onClick={ops.handleListMaps}
+                    disabled={ops.busy}
+                    className="btn-neu"
+                  >
+                    Listar
+                  </Button>
+                  <Button
+                    onClick={ops.handleCurrentMap}
+                    disabled={ops.busy}
+                    className="btn-neu"
+                  >
+                    Actual
+                  </Button>
+                  <Button
+                    onClick={ops.handlePoints}
+                    disabled={ops.busy}
+                    className="btn-neu"
+                  >
+                    Puntos
+                  </Button>
+                </div>
+                {ops.mapsList.length > 0 && (
+                  <div className="card-inset p-2 mb-4 max-h-40 overflow-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr>
+                          <th>Nombre</th>
+                          <th>Piso</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ops.mapsList.map((m, i) => (
+                          <tr key={i}>
+                            <td>{m.name}</td>
+                            <td>{m.floor}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
-              </Button>
+                <div className="flex gap-2">
+                  <input
+                    className="input-neu flex-1"
+                    placeholder="Mapa destino..."
+                    value={ops.mapName}
+                    onChange={(e) => ops.setMapName(e.target.value)}
+                  />
+                  <Button
+                    onClick={ops.handleSwitchInElevator}
+                    disabled={ops.busy}
+                    className="btn-neu"
+                  >
+                    Ir (Elev)
+                  </Button>
+                </div>
+                <div className="flex gap-2 mt-3">
+                  <input
+                    className="input-neu flex-1"
+                    placeholder="Mapa agrupar..."
+                    value={ops.groupMapName}
+                    onChange={(e) => ops.setGroupMapName(e.target.value)}
+                  />
+                  <Button
+                    onClick={ops.handlePointGrouping}
+                    disabled={ops.busy}
+                    className="btn-neu"
+                  >
+                    Agrupar
+                  </Button>
+                </div>
+              </Card>
             </div>
+          )}
 
-            {robotsErr && (
-              <div className="text-xs text-red-600 mt-1">
-                {String(robotsErr)}
-              </div>
-            )}
-
-            {manualSnMode && (
-              <input
-                className="input-neu w-full mt-2"
-                value={sn}
-                onChange={(e) => setSn(e.target.value)}
-                placeholder="OP..."
-              />
-            )}
-
-            {!robotsLoading && !robotsErr && !!robots.length && (
-              <div className="text-xs text-foreground/60 mt-1">
-                {robots.length} robot(s) disponibles para seleccionar.
-              </div>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-sm text-slate-500">limit</label>
-            <input
-              className="input-neu w-full"
-              value={limit}
-              onChange={(e) => setLimit(Math.max(0, Number(e.target.value) || 0))}
-              inputMode="numeric"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm text-slate-500">offset</label>
-            <input
-              className="input-neu w-full"
-              value={offset}
-              onChange={(e) => setOffset(Math.max(0, Number(e.target.value) || 0))}
-              inputMode="numeric"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm text-slate-500">
-              need_element (mapa actual)
-            </label>
-            <select
-              className="input-neu w-full"
-              value={String(needElements)}
-              onChange={(e) => setNeedElements(e.target.value === "true")}
-            >
-              <option value="true">true</option>
-              <option value="false">false</option>
-            </select>
-          </div>
-
-          <div className="flex items-end">
-            <div className="w-full">
-              <Button disabled={busy} onClick={() => setResult(null)} className="w-full">
-                Limpiar resultado
-              </Button>
-            </div>
-          </div>
-
-          {busy && (
-            <div className="flex items-end">
-              <div className="w-full">
-                <Button disabled className="w-full">
-                  <Spinner /> Procesando…
+          {activeSection === "Llamadas" && (
+            <div className="space-y-4 fade-in">
+              <Card>
+                <h2 className="mb-4">Llamadas Custom</h2>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                  <div>
+                    <label
+                      className="text-xs font-bold mb-1 block"
+                      style={{ color: "var(--neu-text-muted)" }}
+                    >
+                      MAPA
+                    </label>
+                    <div className="flex gap-1">
+                      <select
+                        className="select-neu w-full"
+                        value={ops.callMapName}
+                        onChange={(e) => ops.setCallMapName(e.target.value)}
+                      >
+                        <option value="">-- Seleccionar --</option>
+                        {mapOptions.map((m) => (
+                          <option key={m.value} value={m.value}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                      <Button
+                        onClick={ops.handleListMaps}
+                        disabled={ops.busy}
+                        className="btn-neu px-2"
+                        title="Consultar Mapas"
+                      >
+                        ↻
+                      </Button>
+                    </div>
+                  </div>
+                  <div>
+                    <label
+                      className="text-xs font-bold mb-1 block"
+                      style={{ color: "var(--neu-text-muted)" }}
+                    >
+                      PUNTO
+                    </label>
+                    <div className="flex gap-1">
+                      <select
+                        className="select-neu w-full"
+                        value={ops.callPoint}
+                        onChange={(e) => ops.setCallPoint(e.target.value)}
+                      >
+                        <option value="">-- Seleccionar --</option>
+                        {pointOptions.map((p) => (
+                          <option key={p.value} value={p.value}>
+                            {p.label}
+                          </option>
+                        ))}
+                      </select>
+                      <Button
+                        onClick={ops.handlePoints}
+                        disabled={ops.busy}
+                        className="btn-neu px-2"
+                        title="Consultar Puntos"
+                      >
+                        ↻
+                      </Button>
+                    </div>
+                  </div>
+                  <div>
+                    <label
+                      className="text-xs font-bold mb-1 block"
+                      style={{ color: "var(--neu-text-muted)" }}
+                    >
+                      TIPO
+                    </label>
+                    <select
+                      className="select-neu w-full"
+                      value={ops.callPointType}
+                      onChange={(e) => ops.setCallPointType(e.target.value)}
+                    >
+                      <option value="">-- (Opcional) --</option>
+                      {typeOptions.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div>
+                    <label
+                      className="text-xs font-bold mb-1 block"
+                      style={{ color: "var(--neu-text-muted)" }}
+                    >
+                      DEVICE NAME
+                    </label>
+                    <input
+                      className="input-neu w-full"
+                      value={ops.callDeviceName}
+                      onChange={(e) => ops.setCallDeviceName(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label
+                      className="text-xs font-bold mb-1 block"
+                      style={{ color: "var(--neu-text-muted)" }}
+                    >
+                      MODE
+                    </label>
+                    <select
+                      className="select-neu w-full"
+                      value={ops.callMode}
+                      onChange={(e) => ops.setCallMode(e.target.value)}
+                    >
+                      <option value="">(Default)</option>
+                      <option>IMG</option>
+                      <option>CALL</option>
+                      <option>QR_CODE</option>
+                      <option>VIDEO</option>
+                    </select>
+                  </div>
+                </div>
+                {
+                  //<CollapsibleJson
+                  //label="Mode Data (JSON)"
+                  //value={ops.modeData}
+                  //onChange={ops.setModeData}
+                  ///>
+                }
+                <Button
+                  onClick={ops.handleCall}
+                  disabled={ops.busy}
+                  className="w-full btn-neu"
+                >
+                  Llamar
                 </Button>
+              </Card>
+              <Card>
+                <div className="flex items-end gap-2 mb-2">
+                  <div className="flex-1">
+                    <label
+                      className="text-xs font-bold mb-1 block"
+                      style={{ color: "var(--neu-text-muted)" }}
+                    >
+                      TASK ID (Gestión)
+                    </label>
+                    <div className="flex gap-2">
+                      <select
+                        className="select-neu flex-1"
+                        value={ops.taskId}
+                        onChange={(e) => ops.setTaskId(e.target.value)}
+                      >
+                        <option value="">
+                          -- Seleccionar Activa / Histórico --
+                        </option>
+                        {ops.activeTaskIds.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.label || t.id}{" "}
+                            {t.timestamp
+                              ? `(${new Date(
+                                  t.timestamp
+                                ).toLocaleTimeString()})`
+                              : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <Button
+                        onClick={ops.handleRefreshTaskIds}
+                        disabled={ops.busy}
+                        className="btn-neu"
+                        title="Buscar Tarea Activa"
+                      >
+                        ↻
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={ops.handleCancelCall}
+                      disabled={ops.busy || !ops.taskId}
+                      className="btn-neu badge-danger"
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      onClick={ops.handleCompleteCall}
+                      disabled={ops.busy || !ops.taskId}
+                      className="btn-neu badge-success"
+                    >
+                      Completar
+                    </Button>
+                  </div>
+                </div>
+                <input
+                  className="input-neu w-full text-xs mb-3"
+                  placeholder="O escribir ID manual..."
+                  value={ops.taskId}
+                  onChange={(e) => ops.setTaskId(e.target.value)}
+                />
+                {
+                  //<CollapsibleJson
+                  //label="Next Task JSON"
+                  //value={ops.nextCallTask}
+                  //onChange={ops.setNextCallTask}
+                  //height="h-20"
+                  ///>
+                }
+              </Card>
+            </div>
+          )}
+
+          {activeSection === "Hardware" && (
+            <div className="space-y-4 fade-in">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Card>
+                  <h2 className="mb-2">Energía</h2>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={ops.handleRechargeV1}
+                      disabled={ops.busy}
+                      className="flex-1 btn-neu"
+                    >
+                      V1
+                    </Button>
+                    <Button
+                      onClick={ops.handleRechargeV2}
+                      disabled={ops.busy}
+                      className="flex-1 btn-neu"
+                    >
+                      V2
+                    </Button>
+                  </div>
+                </Card>
+                <Card>
+                  <h2 className="mb-2">Puertas (Multi-select)</h2>
+                  <div className="flex gap-2 flex-wrap mb-3">
+                    {availableDoors.map((door) => (
+                      <button
+                        key={door}
+                        className={`px-3 py-2 text-xs font-bold rounded-lg border transition-all ${
+                          ops.selectedDoors.includes(door)
+                            ? "bg-blue-500 text-white border-blue-600 shadow-md"
+                            : "bg-transparent border-gray-400 text-gray-500 hover:bg-gray-100"
+                        }`}
+                        onClick={() => ops.toggleDoor(door)}
+                      >
+                        {door}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => ops.handleControlDoors(true)}
+                      disabled={ops.busy || ops.selectedDoors.length === 0}
+                      className="flex-1 btn-neu"
+                      style={{ color: "var(--accent-secondary)" }}
+                    >
+                      Abrir
+                    </Button>
+                    <Button
+                      onClick={() => ops.handleControlDoors(false)}
+                      disabled={ops.busy || ops.selectedDoors.length === 0}
+                      className="flex-1 btn-neu"
+                      style={{ color: "var(--accent-danger)" }}
+                    >
+                      Cerrar
+                    </Button>
+                  </div>
+                </Card>
               </div>
+              <Card>
+                <h2 className="mb-2">Pantalla</h2>
+                <div className="flex gap-2">
+                  <input
+                    className="input-neu w-full"
+                    value={ops.screenContent}
+                    onChange={(e) => ops.setScreenContent(e.target.value)}
+                  />
+                  <Button
+                    onClick={ops.handleScreenSet}
+                    disabled={ops.busy}
+                    className="btn-neu"
+                  >
+                    Set
+                  </Button>
+                </div>
+                <h2 className="mb-2 mt-4">Posición</h2>
+                <div className="flex gap-2">
+                  <input
+                    className="input-neu w-20"
+                    placeholder="Int"
+                    value={ops.posInterval}
+                    onChange={(e) => ops.setPosInterval(e.target.value)}
+                  />
+                  <input
+                    className="input-neu w-20"
+                    placeholder="Times"
+                    value={ops.posTimes}
+                    onChange={(e) => ops.setPosTimes(e.target.value)}
+                  />
+                  <Button
+                    onClick={ops.handlePositionCmd}
+                    disabled={ops.busy}
+                    className="btn-neu"
+                  >
+                    Cmd
+                  </Button>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {activeSection === "Tareas" && (
+            <div className="space-y-4 fade-in">
+              <Card>
+                <h3 className="font-bold mb-2">Delivery</h3>
+                <CollapsibleJson
+                  value={ops.deliveryPayload}
+                  onChange={ops.setDeliveryPayload}
+                />
+                <div className="flex gap-2 mt-2">
+                  <Button
+                    onClick={ops.handleDeliveryTask}
+                    disabled={ops.busy}
+                    className="flex-1 btn-neu"
+                  >
+                    Enviar
+                  </Button>
+                  <select
+                    className="select-neu w-32"
+                    value={ops.deliveryAction}
+                    onChange={(e) => ops.setDeliveryAction(e.target.value)}
+                  >
+                    <option>START</option>
+                    <option>CANCEL</option>
+                  </select>
+                  <Button
+                    onClick={ops.handleDeliveryAction}
+                    disabled={ops.busy}
+                    className="btn-neu"
+                  >
+                    Act
+                  </Button>
+                </div>
+              </Card>
+              <Card>
+                <h3 className="font-bold mb-2">Transport</h3>
+                <CollapsibleJson
+                  value={ops.transportPayload}
+                  onChange={ops.setTransportPayload}
+                />
+                <div className="flex gap-2 mt-2">
+                  <Button
+                    onClick={ops.handleTransportTask}
+                    disabled={ops.busy}
+                    className="flex-1 btn-neu"
+                  >
+                    Enviar
+                  </Button>
+                  <select
+                    className="select-neu w-32"
+                    value={ops.transportAction}
+                    onChange={(e) => ops.setTransportAction(e.target.value)}
+                  >
+                    <option>START</option>
+                    <option>CANCEL</option>
+                  </select>
+                  <Button
+                    onClick={ops.handleTransportAction}
+                    disabled={ops.busy}
+                    className="btn-neu"
+                  >
+                    Act
+                  </Button>
+                </div>
+              </Card>
+              <Card>
+                <h3
+                  className="font-bold mb-2"
+                  style={{ color: "var(--accent-danger)" }}
+                >
+                  Cancelar Todo
+                </h3>
+                <CollapsibleJson
+                  value={ops.cancelPayload}
+                  onChange={ops.setCancelPayload}
+                  height="h-20"
+                />
+                <Button
+                  onClick={ops.handleCancelTask}
+                  disabled={ops.busy}
+                  className="w-full mt-2 btn-neu"
+                >
+                  Ejecutar Cancelación
+                </Button>
+              </Card>
+            </div>
+          )}
+
+          {activeSection === "Avanzado" && (
+            <div className="space-y-4 fade-in">
+              <Card>
+                <h2 className="mb-2">Tray Order</h2>
+                <CollapsibleJson
+                  value={ops.trayOrderPayload}
+                  onChange={ops.setTrayOrderPayload}
+                  height="h-24"
+                />
+                <Button
+                  onClick={ops.handleTrayOrder}
+                  disabled={ops.busy}
+                  className="w-full mt-2 btn-neu"
+                >
+                  Enviar
+                </Button>
+              </Card>
+              <Card>
+                <h2 className="mb-2">A2B (Errand)</h2>
+                <CollapsibleJson
+                  value={ops.errandPayload}
+                  onChange={ops.setErrandPayload}
+                  height="h-24"
+                />
+                <div className="flex gap-2 mt-2">
+                  <Button
+                    onClick={ops.handleErrandTask}
+                    disabled={ops.busy}
+                    className="flex-1 btn-neu"
+                  >
+                    Enviar
+                  </Button>
+                  <input
+                    className="input-neu flex-1"
+                    placeholder="Session ID"
+                    value={ops.errandActionSession}
+                    onChange={(e) => ops.setErrandActionSession(e.target.value)}
+                  />
+                  <Button
+                    onClick={ops.handleErrandAction}
+                    disabled={ops.busy}
+                    className="btn-neu"
+                  >
+                    Action
+                  </Button>
+                </div>
+              </Card>
+              <Card>
+                <h2 className="mb-2">Door Capture</h2>
+                <div className="flex gap-2">
+                  <input
+                    className="input-neu flex-1"
+                    placeholder="PID"
+                    value={ops.doorCapturePid}
+                    onChange={(e) => ops.setDoorCapturePid(e.target.value)}
+                  />
+                  <Button
+                    onClick={ops.handleDoorCapture}
+                    disabled={ops.busy}
+                    className="btn-neu"
+                  >
+                    Listar
+                  </Button>
+                </div>
+              </Card>
             </div>
           )}
         </div>
-      </Card>
+      </div>
 
-      {/* Mapas y puntos */}
-      <Card className="lg:col-span-12">
-        <h2>Mapas y puntos</h2>
-
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          <div>
-            <Button className="w-full" onClick={handleListMaps} disabled={busy}>
-              Listar mapas
-            </Button>
-          </div>
-          <div>
-            <Button className="w-full" onClick={handleCurrentMap} disabled={busy}>
-              Mapa actual
-            </Button>
-          </div>
-          <div>
-            <Button className="w-full" onClick={handlePoints} disabled={busy}>
-              Puntos (lista)
-            </Button>
-          </div>
-          <div>
-            <label className="block text-sm text-slate-500">
-              map_name (switch/elevador)
-            </label>
-            <input
-              className="input-neu w-full"
-              value={mapName}
-              onChange={(e) => setMapName(e.target.value)}
-            />
-          </div>
-          <div>
-            <Button
-              className="w-full"
-              onClick={handleSwitchInElevator}
-              disabled={busy || !mapName}
-            >
-              Cambiar mapa en ascensor
-            </Button>
-          </div>
-        </div>
-
-        {mapsList.length > 0 &&
-          renderTable(mapsList, [c("name", "name"), c("floor", "floor")])}
-        {pointsList.length > 0 &&
-          renderTable(pointsList, [c("name"), c("type"), c("x"), c("y"), c("z")])}
-
-        {currentMap && (
-          <div className="mt-3 text-sm text-slate-600">
-            Mapa actual: <b>{currentMap?.name}</b> · piso: <b>{currentMap?.floor}</b>{" "}
-            {Array.isArray(currentMap?.elements) && (
-              <span>· elementos: {currentMap.elements.length}</span>
-            )}
-          </div>
-        )}
-      </Card>
-
-      {/* Llamadas */}
-      <Card className="lg:col-span-12">
-        <h2>Llamadas (custom_call)</h2>
-
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-          <div>
-            <label className="block text-sm text-slate-500">call_device_name</label>
-            <input
-              className="input-neu w-full"
-              value={callDeviceName}
-              onChange={(e) => setCallDeviceName(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-slate-500">map_name</label>
-            <input
-              className="input-neu w-full"
-              value={callMapName}
-              onChange={(e) => setCallMapName(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-slate-500">point</label>
-            <input
-              className="input-neu w-full"
-              value={callPoint}
-              onChange={(e) => setCallPoint(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-slate-500">point_type (opcional)</label>
-            <input
-              className="input-neu w-full"
-              value={callPointType}
-              onChange={(e) => setCallPointType(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-slate-500">call_mode</label>
-            <select
-              className="input w-full"
-              value={callMode}
-              onChange={(e) => setCallMode(e.target.value)}
-            >
-              <option value="">(vacío)</option>
-              <option value="IMG">IMG</option>
-              <option value="QR_CODE">QR_CODE</option>
-              <option value="VIDEO">VIDEO</option>
-              <option value="CALL_CONFIRM">CALL_CONFIRM</option>
-              <option value="CALL">CALL</option>
-            </select>
-          </div>
-          <div>
-            <Button className="w-full" onClick={handleCall} disabled={busy}>
-              Llamar
-            </Button>
-          </div>
-        </div>
-
-        <div className="mt-3 grid grid-cols-1 gap-2">
-          <label className="block text-sm text-slate-500">mode_data (JSON)</label>
-          <textarea
-            className="input-neu w-full h-36"
-            value={modeData}
-            onChange={(e) => setModeData(e.target.value)}
-          />
-        </div>
-
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <div>
-            <label className="block text-sm text-slate-500">task_id</label>
-            <input
-              className="input-neu w-full"
-              value={taskId}
-              onChange={(e) => setTaskId(e.target.value)}
-            />
-          </div>
-          <div>
-            <Button className="w-full" onClick={handleCancelCall} disabled={busy || !taskId}>
-              Cancelar llamada
-            </Button>
-          </div>
-          <div className="lg:col-span-2">
-            <Button className="w-full" onClick={handleCompleteCall} disabled={busy || !taskId}>
-              Completar llamada
-            </Button>
-          </div>
-        </div>
-
-        <div className="mt-2 grid grid-cols-1 gap-2">
-          <label className="block text-sm text-slate-500">next_call_task (JSON opcional)</label>
-          <textarea
-            className="input-neu w-full h-32"
-            value={nextCallTask}
-            onChange={(e) => setNextCallTask(e.target.value)}
-          />
-        </div>
-      </Card>
-
-      {/* Energía / Puertas / Pantalla / Posición */}
-      <Card className="lg:col-span-12">
-        <h2>Robot · Energía, Puertas, Pantalla y Posición</h2>
-
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-          <div>
-            <Button className="w-full" onClick={handleRechargeV1} disabled={busy}>
-              Recargar (v1)
-            </Button>
-          </div>
-          <div>
-            <Button className="w-full" onClick={handleRechargeV2} disabled={busy}>
-              Recargar (v2)
-            </Button>
-          </div>
-          <div>
-            <Button className="w-full" onClick={handleDoorState} disabled={busy}>
-              Estado de puertas
-            </Button>
-          </div>
-          <div>
-            <label className="block text-sm text-slate-500">door_number</label>
-            <input
-              className="input-neu w-full"
-              value={doorNumber}
-              onChange={(e) => setDoorNumber(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-slate-500">operation</label>
-            <select
-              className="input w-full"
-              value={String(doorOp)}
-              onChange={(e) => setDoorOp(e.target.value === "true")}
-            >
-              <option value="true">abrir</option>
-              <option value="false">cerrar</option>
-            </select>
-          </div>
-          <div>
-            <Button className="w-full" onClick={handleControlDoors} disabled={busy}>
-              Controlar puerta
-            </Button>
-          </div>
-        </div>
-
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-          <div className="lg:col-span-3">
-            <label className="block text-sm text-slate-500">screen.content</label>
-            <input
-              className="input-neu w-full"
-              value={screenContent}
-              onChange={(e) => setScreenContent(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-slate-500">screen.show</label>
-            <select
-              className="input w-full"
-              value={String(screenShow)}
-              onChange={(e) => setScreenShow(e.target.value === "true")}
-            >
-              <option value="true">true</option>
-              <option value="false">false</option>
-            </select>
-          </div>
-          <div className="lg:col-span-2">
-            <Button className="w-full" onClick={handleScreenSet} disabled={busy}>
-              Actualizar pantalla
-            </Button>
-          </div>
-        </div>
-
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-          <div>
-            <label className="block text-sm text-slate-500">pos.interval (s)</label>
-            <input
-              className="input-neu w-full"
-              value={posInterval}
-              onChange={(e) => setPosInterval(e.target.value)}
-              inputMode="numeric"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-slate-500">pos.times</label>
-            <input
-              className="input-neu w-full"
-              value={posTimes}
-              onChange={(e) => setPosTimes(e.target.value)}
-              inputMode="numeric"
-            />
-          </div>
-          <div className="lg:col-span-2">
-            <Button className="w-full" onClick={handlePositionCmd} disabled={busy}>
-              Enviar comando de posición
-            </Button>
-          </div>
-        </div>
-      </Card>
-
-      {/* Delivery / Transport */}
-      <Card className="lg:col-span-12">
-        <h2>Delivery / Transport</h2>
-
-        <div className="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div>
-            <h3 className="text-sm font-medium">delivery_task</h3>
-            <textarea
-              className="input-neu w-full h-40"
-              value={deliveryPayload}
-              onChange={(e) => setDeliveryPayload(e.target.value)}
-            />
-            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div>
-                <label className="block text-sm text-slate-500">delivery_action</label>
-                <select
-                  className="input w-full"
-                  value={deliveryAction}
-                  onChange={(e) => setDeliveryAction(e.target.value)}
-                >
-                  <option value="START">START</option>
-                  <option value="COMPLETE">COMPLETE</option>
-                  <option value="CANCEL_ALL_DELIVERY">CANCEL_ALL_DELIVERY</option>
-                </select>
-              </div>
-              <div>
-                <Button className="w-full" onClick={handleDeliveryTask} disabled={busy}>
-                  Enviar delivery_task
-                </Button>
-              </div>
-              <div>
-                <Button className="w-full" onClick={handleDeliveryAction} disabled={busy}>
-                  Enviar delivery_action
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-sm font-medium">transport_task</h3>
-            <textarea
-              className="input-neu w-full h-40"
-              value={transportPayload}
-              onChange={(e) => setTransportPayload(e.target.value)}
-            />
-            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div>
-                <label className="block text-sm text-slate-500">transport_action</label>
-                <select
-                  className="input w-full"
-                  value={transportAction}
-                  onChange={(e) => setTransportAction(e.target.value)}
-                >
-                  <option value="START">START</option>
-                  <option value="COMPLETE">COMPLETE</option>
-                  <option value="CANCEL_ALL_DELIVERY">CANCEL_ALL_DELIVERY</option>
-                </select>
-              </div>
-              <div>
-                <Button className="w-full" onClick={handleTransportTask} disabled={busy}>
-                  Enviar transport_task
-                </Button>
-              </div>
-              <div>
-                <Button className="w-full" onClick={handleTransportAction} disabled={busy}>
-                  Enviar transport_action
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      {/* Cancelar tareas / Estado / Grupos / Robots */}
-      <Card className="lg:col-span-12">
-        <h2>Gestión de tareas y estado</h2>
-
-        <div className="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div>
-            <h3 className="text-sm font-medium">Cancelar tareas</h3>
-            <textarea
-              className="input-neu w-full h-28"
-              value={cancelTasksPayload}
-              onChange={(e) => setCancelTasksPayload(e.target.value)}
-            />
-            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div>
-                <Button className="w-full" onClick={handleCancelTask} disabled={busy}>
-                  Cancelar
-                </Button>
-              </div>
-              <div>
-                <Button className="w-full" onClick={handleRobotTaskState} disabled={busy}>
-                  Estado tarea actual
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-sm font-medium">Estado / Grupos / Robots</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div>
-                <Button className="w-full" onClick={handleStatusBySn} disabled={busy}>
-                  Estado por SN
-                </Button>
-              </div>
-              <div>
-                <label className="block text-sm text-slate-500">group_id</label>
-                <input
-                  className="input-neu w-full"
-                  value={groupId}
-                  onChange={(e) => setGroupId(e.target.value)}
-                />
-              </div>
-              <div>
-                <Button className="w-full" onClick={handleStatusByGroup} disabled={busy || !groupId}>
-                  Estado por grupo
-                </Button>
-              </div>
-              <div>
-                <label className="block text-sm text-slate-500">device (para grupos)</label>
-                <input
-                  className="input-neu w-full"
-                  value={device}
-                  onChange={(e) => setDevice(e.target.value)}
-                  placeholder="device_id"
-                />
-              </div>
-              <div>
-                <Button className="w-full" onClick={handleGroupList} disabled={busy}>
-                  Listar grupos
-                </Button>
-              </div>
-              <div>
-                <label className="block text-sm text-slate-500">group_id (robots)</label>
-                <input
-                  className="input-neu w-full"
-                  value={robotsGroupId}
-                  onChange={(e) => setRobotsGroupId(e.target.value)}
-                />
-              </div>
-              <div>
-                <Button className="w-full" onClick={handleRobotsByGroup} disabled={busy || !robotsGroupId}>
-                  Robots del grupo
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      {/* Tray orders / Agrupación / Door Capture / A2B */}
-      <Card className="lg:col-span-12">
-        <h2>Pedidos a bandejas · Agrupación de puntos · Door Capture · A2B</h2>
-
-        <div className="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div>
-            <h3 className="text-sm font-medium">Tray order</h3>
-            <textarea
-              className="input-neu w-full h-28"
-              value={trayOrderPayload}
-              onChange={(e) => setTrayOrderPayload(e.target.value)}
-            />
-            <div className="mt-2">
-              <Button className="w-full" onClick={handleTrayOrder} disabled={busy}>
-                Enviar tray_order
-              </Button>
-            </div>
-
-            <div className="mt-4">
-              <h3 className="text-sm font-medium">Agrupación de puntos (map tool)</h3>
-              <label className="block text-sm text-slate-500">map_name</label>
-              <input
-                className="input-neu w-full"
-                value={groupMapName}
-                onChange={(e) => setGroupMapName(e.target.value)}
-              />
-              <div className="mt-2">
-                <Button
-                  className="w-full"
-                  onClick={handlePointGrouping}
-                  disabled={busy || !groupMapName}
-                >
-                  Obtener agrupación
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-sm font-medium">Door Capture</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <div>
-                <label className="block text-sm text-slate-500">pid (SN)</label>
-                <input
-                  className="input-neu w-full"
-                  value={doorCapturePid}
-                  onChange={(e) => setDoorCapturePid(e.target.value)}
-                  placeholder="por defecto usa SN"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-slate-500">limit</label>
-                <input
-                  className="input-neu w-full"
-                  value={limit}
-                  onChange={(e) => setLimit(Number(e.target.value) || 10)}
-                  inputMode="numeric"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-slate-500">offset</label>
-                <input
-                  className="input-neu w-full"
-                  value={offset}
-                  onChange={(e) => setOffset(Number(e.target.value) || 0)}
-                  inputMode="numeric"
-                />
-              </div>
-              <div className="sm:col-span-3">
-                <Button className="w-full" onClick={handleDoorCapture} disabled={busy}>
-                  Consultar Door Capture
-                </Button>
-              </div>
-            </div>
-
-            <div className="mt-4">
-              <h3 className="text-sm font-medium">A2B (errand)</h3>
-              <textarea
-                className="input-neu w-full h-28"
-                value={errandPayload}
-                onChange={(e) => setErrandPayload(e.target.value)}
-              />
-              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div>
-                  <Button className="w-full" onClick={handleErrandTask} disabled={busy}>
-                    Enviar A2B (task_errand)
-                  </Button>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <input
-                    className="input-neu w-full"
-                    placeholder="session_id"
-                    value={errandActionSession}
-                    onChange={(e) => setErrandActionSession(e.target.value)}
-                  />
-                  <select
-                    className="input w-full"
-                    value={errandActionType}
-                    onChange={(e) => setErrandActionType(e.target.value)}
-                  >
-                    <option value="CANCEL">CANCEL</option>
-                    <option value="RETRY">RETRY</option>
-                  </select>
-                  <input
-                    className="input-neu w-full"
-                    placeholder="auth (opcional)"
-                    value={errandActionAuth}
-                    onChange={(e) => setErrandActionAuth(e.target.value)}
-                  />
-                </div>
-                <div className="sm:col-span-2">
-                  <Button
-                    className="w-full"
-                    onClick={handleErrandAction}
-                    disabled={busy || !errandActionSession}
-                  >
-                    Control A2B (errand_action)
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      {/* Panel de resultados */}
-      <Card className="lg:col-span-12">
-        <h2>Resultado</h2>
-        <JsonView className="card-response" data={result} />
-      </Card>
-    </>
+      {
+        //ops.result && (
+        //<Card className="mt-8 border-t border-gray-500">
+        //<div className="flex justify-between items-center mb-2">
+        //<h3>Resultado</h3>
+        //<span className="badge">{new Date().toLocaleTimeString()}</span>
+        //</div>
+        //<ResultViewer data={ops.result} />
+        //</Card>
+        //)
+      }
+    </div>
   );
 }
 
-/* =========================
- *  Componente principal: Apibella
- * ========================= */
+/* ==========================================================================================
+ * COMPONENTE PRINCIPAL
+ * ========================================================================================== */
 export default function Apibella() {
-  // Controles comunes
   const [shopId, setShopId] = useState("");
   const [startDate, setStartDate] = useState(
     new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10)
   );
   const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10));
   const [tzOffset, setTzOffset] = useState(getDefaultTzHours());
-  const [adId, setAdId] = useState(""); // opcional, solo afecta módulo Advertising
-
-  // Alertas
+  const [adId, setAdId] = useState("");
   const [alertState, setAlertState] = useState(null);
-  const showError = (e, title = "Error") => {
-    const msg =
-      e?.response?.data?.message ||
-      e?.response?.data?.code ||
-      e?.message ||
-      String(e);
-    setAlertState({ title, message: msg, variant: "error" });
-  };
-  const showOk = (title, res) => {
-    const msg = res?.message ?? "ok";
-    setAlertState({ title, message: msg, variant: "success" });
-  };
+
+  const showError = (e, title = "Error") =>
+    setAlertState({
+      title,
+      message: e?.response?.data?.message || e?.message || String(e),
+      variant: "error",
+    });
+  const showOk = (title, res) =>
+    setAlertState({ title, message: res?.message ?? "ok", variant: "success" });
+
   async function getWithPopup(title, url, params) {
     const res = await get(url, params);
     showOk(title, res);
@@ -2346,43 +2009,27 @@ export default function Apibella() {
     return res;
   }
 
-  // ===== Selector de tiendas (shop_id)
   const [shops, setShops] = useState([]);
   const [shopsLoading, setShopsLoading] = useState(false);
-  const [shopsErr, setShopsErr] = useState(null);
   const [manualShopMode, setManualShopMode] = useState(false);
 
   const loadShops = async () => {
     try {
       setShopsLoading(true);
-      setShopsErr(null);
       const res = await get("/data-open-platform-service/v1/api/shop", {
         limit: 100,
         offset: 0,
       });
-      const list = res?.data?.list || res?.list || [];
-      setShops(list);
-      // dejamos shopId vacío por defecto para consulta global
+      setShops(res?.data?.list || res?.list || []);
     } catch (e) {
-      setShopsErr(e?.response?.data || e?.message || "Error cargando tiendas");
     } finally {
       setShopsLoading(false);
     }
   };
-
   useEffect(() => {
     loadShops();
   }, []);
 
-  const selectShopValue = (() => {
-    if (manualShopMode) return "__manual__";
-    const exists = shops.some(
-      (s) => String(s.shop_id ?? s.id ?? "") === String(shopId)
-    );
-    return exists ? String(shopId) : String(shopId) || "";
-  })();
-
-  // ===== Hooks por módulo (usan misma infraestructura)
   const delivery = useModule({
     config: MODULES.delivery,
     startDate,
@@ -2475,202 +2122,161 @@ export default function Apibella() {
   });
 
   const tabs = [
-    { key: "delivery", label: "Delivery", module: MODULES.delivery, state: delivery },
+    {
+      key: "delivery",
+      label: "Delivery",
+      module: MODULES.delivery,
+      state: delivery,
+    },
     { key: "cruise", label: "Cruise", module: MODULES.cruise, state: cruise },
-    { key: "greeter", label: "Greeter", module: MODULES.greeter, state: greeter },
-    { key: "interactive", label: "Interactive", module: MODULES.interactive, state: interactive },
-    { key: "solicit", label: "Pick-up", module: MODULES.solicit, state: solicit },
+    {
+      key: "greeter",
+      label: "Greeter",
+      module: MODULES.greeter,
+      state: greeter,
+    },
+    {
+      key: "interactive",
+      label: "Interactive",
+      module: MODULES.interactive,
+      state: interactive,
+    },
+    {
+      key: "solicit",
+      label: "Pick-up",
+      module: MODULES.solicit,
+      state: solicit,
+    },
     { key: "grid", label: "Grid", module: MODULES.grid, state: grid },
     { key: "ad", label: "Advertising", module: MODULES.ad, state: ad },
-    { key: "recovery", label: "Recovery", module: MODULES.recovery, state: recovery },
+    {
+      key: "recovery",
+      label: "Recovery",
+      module: MODULES.recovery,
+      state: recovery,
+    },
     { key: "call", label: "Call", module: MODULES.call, state: call },
-    // Pestaña de operaciones con selector de robots dependiente de shopId
     { key: "ops", label: "Operaciones" },
   ];
   const [activeTab, setActiveTab] = useState(tabs[0].key);
 
-  const logicTabs = tabs.filter((t) => t.state);
-  const anyLoading = logicTabs.some(
-    (t) => t.state.loadingSummary || t.state.loadingList
-  );
+  // RESPONSIVE NAV: Mobile Dropdown / Desktop Tabs
+  function TabsNav({ tabs, activeKey, onChange }) {
+    return (
+      <div className="nav-neu mb-6">
+        {/* Mobile: Dropdown */}
+        <div className="block lg:hidden w-full">
+          <select
+            className="select-neu w-full"
+            value={activeKey}
+            onChange={(e) => onChange(e.target.value)}
+          >
+            {tabs.map((t) => (
+              <option key={t.key} value={t.key}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        {/* Desktop: Buttons */}
+        <div className="hidden lg:flex gap-2 w-full overflow-x-auto">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => onChange(t.key)}
+              className={`nav-item ${t.key === activeKey ? "active" : ""}`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="mx-auto w-full max-w-screen-2xl px-3 sm:px-4 md:px-6 py-6 min-h-screen">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6">
-        {/* Encabezado + Controles comunes */}
+    <div className="container-neu">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <Card className="lg:col-span-12">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <h2 className="min-w-0">Machine task analysis · Distribution line</h2>
-            {anyLoading && <Spinner />}
+          <div className="flex justify-between items-center mb-4">
+            <h1>Panel Pudu</h1>
           </div>
-
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-6 gap-3">
-            {/* Selector de tienda */}
-            <div className="min-w-0 md:col-span-2">
-              <label className="block text-sm text-slate-500">Tienda (shop_id)</label>
-              <div className="flex flex-wrap gap-2">
-                <select
-                  className="input-neu w-full sm:flex-1"
-                  value={selectShopValue}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (v === "__manual__") {
-                      setManualShopMode(true);
-                    } else {
-                      setManualShopMode(false);
-                      setShopId(v); // "" (todas) o un id
-                    }
-                  }}
-                  title="Selecciona una tienda"
-                >
-                  <option value="">— todas —</option>
-                  {shops.map((s) => {
-                    const id = String(s.shop_id ?? s.id ?? "");
-                    const name = s.shop_name || s.name || id;
-                    return (
-                      <option key={id} value={id}>
-                        {name} · {id}
-                      </option>
-                    );
-                  })}
-                  <option value="__manual__">Escribir shop_id</option>
-                </select>
-                <Button onClick={loadShops} disabled={shopsLoading} className="w-full sm:w-auto">
-                  {shopsLoading ? (
-                    <>
-                      <Spinner /> Actualizando…
-                    </>
-                  ) : (
-                    "Actualizar tiendas"
-                  )}
-                </Button>
-              </div>
-
-              {shopsErr && (
-                <div className="text-xs text-red-600 mt-1">
-                  {typeof shopsErr === "string" ? shopsErr : JSON.stringify(shopsErr)}
-                </div>
-              )}
-
-              {manualShopMode && (
-                <input
-                  className="input-neu w-full mt-2"
-                  value={shopId}
-                  onChange={(e) => setShopId(e.target.value)}
-                  placeholder="Ej: 331300000"
-                  inputMode="numeric"
-                />
-              )}
-
-              {!shopsLoading && !shopsErr && !!shops.length && (
-                <div className="text-xs text-foreground/60 mt-1">
-                  {shops.length} tiendas disponibles.
-                </div>
-              )}
-
-              {shopId && (
-                <p className="text-xs text-foreground/60 mt-1 break-all">
-                  Tienda actual: <span className="font-medium">{shopId}</span>
-                </p>
-              )}
-              {!shopId && (
-                <p className="text-xs text-foreground/60 mt-1">
-                  Sin tienda seleccionada: consultas globales (según permisos).
-                </p>
-              )}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div className="md:col-span-2 flex gap-2">
+              <select
+                className="select-neu w-full"
+                value={shopId}
+                onChange={(e) => setShopId(e.target.value)}
+              >
+                <option value="">Todas las tiendas</option>
+                {shops.map((s) => (
+                  <option key={s.shop_id} value={s.shop_id}>
+                    {s.shop_name}
+                  </option>
+                ))}
+              </select>
+              <Button onClick={loadShops} className="btn-neu">
+                {shopsLoading ? "..." : "↻"}
+              </Button>
             </div>
-
-            <div className="min-w-0">
-              <label className="block text-sm text-slate-500">Inicio</label>
-              <input
-                type="date"
-                className="input-neu w-full"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-              />
-            </div>
-
-            <div className="min-w-0">
-              <label className="block text-sm text-slate-500">Fin</label>
-              <input
-                type="date"
-                className="input-neu w-full"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-              />
-            </div>
-
-            <div className="min-w-0">
-              <label className="block text-sm text-slate-500">timezone_offset (h)</label>
-              <input
-                className="input-neu w-full"
-                value={tzOffset}
-                onChange={(e) => setTzOffset(e.target.value)}
-                placeholder="Ej: 8 para UTC+8"
-                inputMode="numeric"
-              />
-              <p className="text-xs mt-1">Rango: -12 a 14. Por defecto: tu zona.</p>
-            </div>
-
-            <div className="min-w-0">
-              <label className="block text-sm text-slate-500">ad_id (opcional)</label>
-              <input
-                className="input-neu w-full"
-                value={adId}
-                onChange={(e) => setAdId(e.target.value)}
-                placeholder="Ej: 123"
-                inputMode="numeric"
-              />
-              <p className="text-xs mt-1">Filtra endpoints de publicidad.</p>
-            </div>
+            <input
+              type="date"
+              className="input-neu"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+            />
+            <input
+              type="date"
+              className="input-neu"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+            />
           </div>
         </Card>
-
-        {/* NAV DE PESTAÑAS */}
-        <Card className="lg:col-span-12 sticky top-0 z-10">
+        <div className="lg:col-span-12">
           <TabsNav tabs={tabs} activeKey={activeTab} onChange={setActiveTab} />
-        </Card>
-
-        {/* PANELES (contenido por pestaña) */}
-        {tabs.map((t) => (
-          <TabPanel key={t.key} tabKey={t.key} activeKey={activeTab}>
-            {t.key !== "ops" ? (
-              <>
-                <SummarySection
-                  title={t.module.summaryTitle}
-                  module={t.module}
-                  state={t.state}
-                />
-                <ListSection
-                  title={t.module.listTitle}
-                  module={t.module}
-                  state={t.state}
-                />
-              </>
-            ) : (
-              <OperationsTab
-                getWithPopup={getWithPopup}
-                postWithPopup={postWithPopup}
-                showError={showError}
-                shopId={shopId}
-              />
-            )}
-          </TabPanel>
-        ))}
+        </div>
+        <div className="lg:col-span-12">
+          {tabs.map(
+            (t) =>
+              t.key === activeTab && (
+                <div key={t.key} className="fade-in">
+                  {t.key === "ops" ? (
+                    <OperationsTab
+                      getWithPopup={getWithPopup}
+                      postWithPopup={postWithPopup}
+                      showError={showError}
+                      shopId={shopId}
+                    />
+                  ) : (
+                    <div className="space-y-6">
+                      <SummarySection
+                        title={t.module.summaryTitle}
+                        module={t.module}
+                        state={t.state}
+                      />
+                      <ListSection
+                        title={t.module.listTitle}
+                        module={t.module}
+                        state={t.state}
+                      />
+                    </div>
+                  )}
+                </div>
+              )
+          )}
+        </div>
       </div>
-
-      {/* Modal de alertas */}
       <NeumorphicModal
         open={!!alertState}
         title={alertState?.title}
         confirmText="Cerrar"
         hideCancel
-        variant={alertState?.variant || "error"}
+        variant={alertState?.variant}
         onConfirm={() => setAlertState(null)}
-        onCancel={() => setAlertState(null)}
         solidBackdrop
       >
-        <div className="whitespace-pre-wrap break-words">{alertState?.message}</div>
+        {alertState?.message}
       </NeumorphicModal>
     </div>
   );

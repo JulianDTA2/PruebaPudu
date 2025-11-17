@@ -17,7 +17,14 @@ export default function App() {
   return (
     <Routes>
       <Route path="login" element={<LoginLayout />} />
-      <Route path="admin" element={<AdminLayout />}>
+      <Route
+        path="admin"
+        element={
+          <Protected>
+            <AdminLayout />
+          </Protected>
+        }
+      >
         <Route index element={<Navigate to="dashboard" replace />} />
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="logs" element={<Logs />} />
