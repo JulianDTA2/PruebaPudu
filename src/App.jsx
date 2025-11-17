@@ -10,21 +10,32 @@ import Maps from "./pages/Maps.jsx";
 import ApiExplorer from "./pages/ApiExplorer.jsx";
 import Apicc1 from "./pages/Apicc1.jsx";
 import ApiBellaBot from "./pages/Apibella.jsx";
+import Camara from "./pages/Cam.jsx";
+import Realtime from "./pages/Realtime.jsx";
 
 export default function App() {
   return (
-      <Routes>
-        <Route path="login" element={<LoginLayout />} />
-        <Route path="admin" element={<AdminLayout />}>
-          <Route index element={<Navigate to="dashboard" replace />} />
-          <Route path="dashboard" element={<Dashboard />} />
-          <Route path="logs" element={<Logs />} />
-          <Route path="maps" element={<Maps />} />
-          <Route path="explorer" element={<ApiExplorer />} />
-          <Route path="apicc" element={<Apicc1 />} />
-          <Route path="apibella" element={<ApiBellaBot />} />
-        </Route>
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
+    <Routes>
+      <Route path="login" element={<LoginLayout />} />
+      <Route
+        path="admin"
+        element={
+          <Protected>
+            <AdminLayout />
+          </Protected>
+        }
+      >
+        <Route index element={<Navigate to="dashboard" replace />} />
+        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="logs" element={<Logs />} />
+        <Route path="maps" element={<Maps />} />
+        <Route path="explorer" element={<ApiExplorer />} />
+        <Route path="apicc" element={<Apicc1 />} />
+        <Route path="apibella" element={<ApiBellaBot />} />
+        <Route path="cam" element={<Camara />} />
+        <Route path="realtime" element={<Realtime />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/login" replace />} />
+    </Routes>
   );
 }
