@@ -51,10 +51,10 @@ export default function AdminLayout() {
                 Dashboard
               </NavItem>
               <NavItem to="/admin/maps">Mapas</NavItem>
-              <NavItem to="/admin/apicc">CC1</NavItem>
+              <NavItem to="/admin/apicc">Limpieza</NavItem>
               <NavItem to="/admin/logs">Logs</NavItem>
               <NavItem to="/admin/explorer">API</NavItem>
-              <NavItem to="/admin/apibella">BellaBot</NavItem>
+              <NavItem to="/admin/apibella">Servicio</NavItem>
               <NavItem to="/admin/cam">Camara</NavItem>
             </nav>
             <button
@@ -116,7 +116,7 @@ export default function AdminLayout() {
                   Mapas
                 </NavItem>
                 <NavItem to="/admin/apicc" onClick={() => setOpen(false)}>
-                  CC1
+                  Limpieza
                 </NavItem>
                 <NavItem to="/admin/logs" onClick={() => setOpen(false)}>
                   Logs
@@ -125,7 +125,7 @@ export default function AdminLayout() {
                   API
                 </NavItem>
                 <NavItem to="/admin/bellabot" onClick={() => setOpen(false)}>
-                  BellaBot
+                  Servicio
                 </NavItem>
                 <NavItem to="/admin/cam" onClick={() => setOpen(false)}>
                   Camara

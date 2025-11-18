@@ -36,7 +36,6 @@ function formatLatency(ms) {
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
-/** Mapeo de imágenes por producto normalizado */
 const PRODUCT_IMAGES = {
   bellabot:
     "https://cdn.pudutech.com/website/images/pc/bellabot/parameter2.2.0.png",
