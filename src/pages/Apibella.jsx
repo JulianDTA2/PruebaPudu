@@ -5,10 +5,6 @@ import NeumorphicModal from "../components/NeumorphicModal.jsx";
 import { Pudu, get, post } from "../services/api.js";
 import JsonView from "../components/JsonView";
 
-/* ==========================================================================================
- * CONSTANTES Y HELPERS
- * ========================================================================================== */
-
 const PRODUCT_IMAGES = {
   bellabot:
     "https://cdn.pudutech.com/website/images/pc/bellabot/parameter2.2.0.png",
@@ -80,9 +76,6 @@ const renderTable = (rows, columns) => (
   </div>
 );
 
-/* ==========================================================================================
- * COMPONENTE INTELIGENTE PARA RESULTADOS
- * ========================================================================================== */
 const ResultViewer = ({ data }) => {
   if (!data) return null;
 
@@ -158,10 +151,6 @@ const ResultViewer = ({ data }) => {
 
   return <JsonView className="card-response" data={data} />;
 };
-
-/* ==========================================================================================
- * CONFIGURACIÓN DE MÓDULOS DE ANÁLISIS (RUTAS Y COLUMNAS CORREGIDAS)
- * ========================================================================================== */
 
 const baseListCols = {
     robot: [c("task_time"), c("sn"), c("robot_name"), c("task_count"), c("duration"), c("mileage")],
@@ -360,10 +349,6 @@ const MODULES = {
   },
 };
 
-/* ==========================================================================================
- * HOOKS BASE
- * ========================================================================================== */
-
 function useModule({
   config,
   startDate,
@@ -435,7 +420,6 @@ function useModule({
         params
       );
       
-      // REFUERZO DE LA EXTRACCIÓN DE DATOS DE PAGINACIÓN (TOTAL y LIST)
       const result = response?.data || response;
       setListRes({
         total: result?.total || result?.data?.total || 0,
@@ -487,7 +471,6 @@ function SummarySection({ title, module, state }) {
   const chart = summaryRes?.chart || [];
   const kpis = useMemo(() => module.kpis(summaryRes), [summaryRes, module]); 
   
-  // Condición para mostrar el mensaje de "No hay datos"
   const hasKpis = kpis.some(k => k.value > 0 || k.prev > 0);
   const showNoDataMessage = summaryRes && chart.length === 0 && !hasKpis && !loadingSummary;
 
@@ -542,7 +525,6 @@ function SummarySection({ title, module, state }) {
       )}
       
       {chart.length > 0 && module.chartCols.length > 0 && renderTable(chart, module.chartCols)}
-      {/* Mensaje si hay datos pero no columnas definidas para el chart */}
       {summaryRes && chart.length > 0 && module.chartCols.length === 0 && (
         <div className="mt-4 p-4 card-inset text-center text-gray-500 font-semibold">
           Datos de gráfico disponibles, pero no hay columnas configuradas para visualizarlos.
@@ -568,7 +550,6 @@ function ListSection({ title, module, state }) {
     clearList, 
   } = state;
   const { total, from, to, list } = (() => {
-    // Usamos la estructura simplificada garantizada por useModule
     const t = listRes?.total ?? 0;
     return {
       total: t,
@@ -578,7 +559,6 @@ function ListSection({ title, module, state }) {
     };
   })();
   
-  // Solo se muestra si listRes no es nulo (se hizo la consulta) y la lista está vacía
   const showNoDataMessage = listRes && list.length === 0 && !loadingList;
 
   return (
@@ -646,7 +626,6 @@ function ListSection({ title, module, state }) {
       )}
       
       {list.length > 0 && module.listCols[groupBy].length > 0 && renderTable(list, module.listCols[groupBy])}
-      {/* Mensaje si hay datos pero no columnas definidas para la lista */}
       {list.length > 0 && module.listCols[groupBy].length === 0 && (
         <div className="mt-4 p-4 card-inset text-center text-gray-500 font-semibold">
           Datos de lista disponibles, pero no hay columnas configuradas para visualizarlos.
@@ -677,10 +656,6 @@ function ListSection({ title, module, state }) {
     </Card>
   );
 }
-
-/* ==========================================================================================
- * COMPONENTES DE OPERACIONES AVANZADAS (FORMULARIOS)
- * ========================================================================================== */
 
 const CollapsibleJson = ({ label, value, onChange, height = "h-40" }) => {
   const [open, setOpen] = useState(false);
@@ -1066,10 +1041,6 @@ function ErrandTaskForm({ payload, setPayload, busy, handleTask, actionSession, 
   );
 }
 
-/* ==========================================================================================
- * COMPONENTES OPERACIONES
- * ========================================================================================== */
-
 const RobotHeader = ({ state }) => {
   const {
     sn,
@@ -1153,9 +1124,6 @@ const RobotHeader = ({ state }) => {
           className="btn-neu"
         >
           {robotsLoading ? "..." : "↻ Lista"}
-        </Button>
-        <Button onClick={() => setResult(null)} className="btn-neu">
-          Limpiar Resultados
         </Button>
       </div>
     </div>
@@ -1352,7 +1320,6 @@ function useOperations({ getWithPopup, postWithPopup, showError, shopId }) {
     );
   };
 
-  // Función auxiliar para verificar SN y mostrar error (para Mapas y Hardware)
   const checkSn = (operation) => {
     if (!sn) {
       showError({ message: `Selecciona un robot (SN) para ${operation}.` }, "Error de Validación");
@@ -1361,7 +1328,6 @@ function useOperations({ getWithPopup, postWithPopup, showError, shopId }) {
     return true;
   };
   
-  // Modificación 1: Listar Mapas (con verificación SN)
   const handleListMaps = () => {
     if (!checkSn("listar mapas")) return;
     run(() =>
@@ -1374,7 +1340,6 @@ function useOperations({ getWithPopup, postWithPopup, showError, shopId }) {
     );
   }
   
-  // Modificación 2: Mapa Actual (con verificación SN)
   const handleCurrentMap = () => {
     if (!checkSn("obtener mapa actual")) return;
     run(() =>
@@ -1391,7 +1356,6 @@ function useOperations({ getWithPopup, postWithPopup, showError, shopId }) {
     );
   }
 
-  // Modificación 3: Listar Puntos (con verificación SN)
   const handlePoints = () => {
     if (!checkSn("listar puntos")) return;
     const queryParams = { sn, limit, offset };
@@ -1417,7 +1381,6 @@ function useOperations({ getWithPopup, postWithPopup, showError, shopId }) {
     );
   };
 
-  // Definición de handleControlDoors
   const handleControlDoors = (explicitOp) => {
     if (!checkSn("controlar puertas")) return;
     const op = typeof explicitOp === "boolean" ? explicitOp : doorOp;
@@ -1438,7 +1401,6 @@ function useOperations({ getWithPopup, postWithPopup, showError, shopId }) {
     );
   };
   
-  // (Resto de funciones de API)
   const handleSwitchInElevator = () =>
     run(() =>
       postWithPopup(
@@ -1752,7 +1714,6 @@ function OperationsTab(props) {
   const selectedRobot = ops.robots.find((r) => r.sn === ops.sn);
   const productType = selectedRobot?.productType;
 
-  // Secciones y los tipos de robot que las soportan (Modularidad)
   const sections = useMemo(() => [
     { id: "Mapas", label: "Mapas/Puntos", types: ["bellabot", "bellabot pro", "flashbot", "cc1", "pudubot"] },
     { id: "Llamadas", label: "Llamadas", types: ["bellabot", "bellabot pro", "flashbot", "pudubot"] }, 
@@ -1767,7 +1728,6 @@ function OperationsTab(props) {
 
   const [activeSection, setActiveSection] = useState(availableSections[0]?.id || "Mapas");
 
-  // Ajustar la sección activa si el robot cambia y la sección actual ya no está disponible
   useEffect(() => {
     if (!availableSections.some(s => s.id === activeSection)) {
       setActiveSection(availableSections[0]?.id || "Mapas");
@@ -1801,7 +1761,6 @@ function OperationsTab(props) {
   const availableDoors = ["H_01", "H_02", "H_03", "H_04"];
   const showDoorControls = productType === 'flashbot' || productType === 'cc1';
   
-  // Columnas para la tabla de puntos
   const pointColumns = [
     c("name", "PUNTO"),
     c("type", "TIPO"),
@@ -1810,8 +1769,6 @@ function OperationsTab(props) {
     c("y", "Y"),
     c("floor", "PISO"),
   ];
-
-  // RESPONSIVE NAV (Dropdown on mobile, Sidebar on desktop)
   function SideNav({ tabs, activeKey, onChange }) {
     return (
       <div className="mb-6 lg:mb-0">
@@ -1867,7 +1824,6 @@ function OperationsTab(props) {
         </div>
 
         <div className="lg:col-span-9 space-y-6">
-          {/* Mapeo dinámico de secciones */}
           {availableSections.map(s => {
             if (s.id !== activeSection) return null;
             
@@ -1921,7 +1877,6 @@ function OperationsTab(props) {
                             </Button>
                             </div>
                             
-                            {/* TABLA DE MAPAS (Listar) */}
                             {ops.mapsList.length > 0 && (
                               <>
                                 <h3 className="font-bold mt-4 mb-2 text-sm uppercase text-gray-500">Lista de Mapas</h3>
@@ -1946,7 +1901,6 @@ function OperationsTab(props) {
                               </>
                             )}
 
-                            {/* TABLA DE PUNTOS (Puntos) */}
                             {ops.pointsList.length > 0 && (
                               <>
                                 <h3 className="font-bold mt-4 mb-2 text-sm uppercase text-gray-500">Puntos del Mapa ({ops.pointsList[0]?.map_name || 'Actual'})</h3>
@@ -2387,24 +2341,10 @@ function OperationsTab(props) {
         </div>
       </div>
 
-      {
-        //ops.result && (
-        //<Card className="mt-8 border-t border-gray-500">
-        //<div className="flex justify-between items-center mb-2">
-        //<h3>Resultado</h3>
-        //<span className="badge">{new Date().toLocaleTimeString()}</span>
-        //</div>
-        //<ResultViewer data={ops.result} />
-        //</Card>
-        //)
-      }
     </div>
   );
 }
 
-/* ==========================================================================================
- * COMPONENTE PRINCIPAL
- * ========================================================================================== */
 export default function Apibella() {
   const [shopId, setShopId] = useState("");
   const [startDate, setStartDate] = useState(
@@ -2456,7 +2396,6 @@ export default function Apibella() {
     loadShops();
   }, []);
 
-  // Inicialización de los módulos de análisis
   const delivery = useModule({ config: MODULES.delivery, startDate, endDate, tzOffset, shopId, adId, getWithPopup, showError });
   const cruise = useModule({ config: MODULES.cruise, startDate, endDate, tzOffset, shopId, adId, getWithPopup, showError });
   const greeter = useModule({ config: MODULES.greeter, startDate, endDate, tzOffset, shopId, adId, getWithPopup, showError });
@@ -2467,7 +2406,6 @@ export default function Apibella() {
   const recovery = useModule({ config: MODULES.recovery, startDate, endDate, tzOffset, shopId, adId, getWithPopup, showError });
   const call = useModule({ config: MODULES.call, startDate, endDate, tzOffset, shopId, adId, getWithPopup, showError });
 
-  // Pestañas de LOGS (Análisis)
   const analysisTabs = [
     { key: "delivery", label: "Delivery", module: MODULES.delivery, state: delivery },
     { key: "cruise", label: "Cruise", module: MODULES.cruise, state: cruise },
@@ -2480,7 +2418,6 @@ export default function Apibella() {
     { key: "call", label: "Call", module: MODULES.call, state: call },
   ];
   
-  // Pestañas Principales (LOGS / OPERACIONES)
   const mainTabs = [
     { key: "logs", label: "LOGS (Análisis)" },
     { key: "ops", label: "OPERACIONES (Control)" },
@@ -2489,11 +2426,9 @@ export default function Apibella() {
   const [activeMainTab, setActiveMainTab] = useState(mainTabs[0].key);
   const [activeAnalysisTab, setActiveAnalysisTab] = useState(analysisTabs[0].key);
 
-  // RESPONSIVE NAV: Mobile Dropdown / Desktop Tabs
   function TabsNav({ tabs, activeKey, onChange }) {
     return (
       <div className="nav-neu mb-6 flex justify-center"> 
-        {/* Mobile: Dropdown */}
         <div className="block lg:hidden w-full">
           <select
             className="select-neu w-full"
@@ -2507,7 +2442,6 @@ export default function Apibella() {
             ))}
           </select>
         </div>
-        {/* Desktop: Buttons */}
         <div className="hidden lg:flex gap-2 w-full overflow-x-auto justify-center"> 
           {tabs.map((t) => (
             <button
@@ -2563,16 +2497,13 @@ export default function Apibella() {
           </div>
         </Card>
         
-        {/* NAVEGACIÓN PRINCIPAL: LOGS / OPERACIONES (Centrada) */}
         <div className="lg:col-span-12">
           <TabsNav tabs={mainTabs} activeKey={activeMainTab} onChange={setActiveMainTab} />
         </div>
         
-        {/* CONTENIDO LOGS */}
         <div className="lg:col-span-12">
           {activeMainTab === "logs" && (
              <div className="fade-in">
-                {/* NAVEGACIÓN DE PESTAÑAS DE ANÁLISIS (Centrada) */}
                 <div className="flex justify-center">
                     <TabsNav tabs={analysisTabs} activeKey={activeAnalysisTab} onChange={setActiveAnalysisTab} />
                 </div>
@@ -2598,7 +2529,6 @@ export default function Apibella() {
              </div>
           )}
           
-          {/* CONTENIDO OPERACIONES */}
           {activeMainTab === "ops" && (
             <OperationsTab
               getWithPopup={getWithPopup}
