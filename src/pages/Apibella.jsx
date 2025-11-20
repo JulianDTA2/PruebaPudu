@@ -29,7 +29,9 @@ function normalizeProductName(raw) {
     return "bellabot";
   if (s.includes("flash")) return "flashbot";
   if (s.includes("cc1")) return "cc1";
-  if (s.includes("pudubot")) return "pudubot"; 
+  if (s.includes("pudubot")) return "pudubot";
+  if (s.includes("ketty")) return "kettybot";
+  if (s.includes("swift")) return "swiftbot";
   return null;
 }
 
@@ -688,7 +690,17 @@ const CollapsibleJson = ({ label, value, onChange, height = "h-40" }) => {
   );
 };
 
-function DeliveryTaskForm({ payload, setPayload, busy, handleTask, handleAction, action, setAction }) {
+function DeliveryTaskForm({ 
+  payload, 
+  setPayload, 
+  busy, 
+  handleTask, 
+  handleAction, 
+  action, 
+  setAction,
+  pointsList, 
+  onRefreshPoints 
+}) {
   const [data, setData] = useState(JSON.parse(payload));
   
   useEffect(() => {
@@ -764,12 +776,29 @@ function DeliveryTaskForm({ payload, setPayload, busy, handleTask, handleAction,
           {(data.trays || []).map((tray, i) => (
             <div key={i} className="card-neu-sm p-3 flex gap-2 items-center">
               <span className="text-xs font-bold w-12 text-gray-500">Bandeja {i + 1}</span>
-              <input
-                className="input-neu flex-1"
-                placeholder="Destination Point (e.g., A1)"
-                value={tray.destinations[0]?.points || ""}
-                onChange={e => handleUpdatePoint(i, e.target.value)}
-              />
+              
+              <div className="flex-1 flex gap-1">
+                <select
+                    className="select-neu w-full"
+                    value={tray.destinations[0]?.points || ""}
+                    onChange={e => handleUpdatePoint(i, e.target.value)}
+                >
+                    <option value="">-- Seleccionar Punto --</option>
+                    {pointsList && pointsList.map((p, idx) => (
+                        <option key={`${p.name}-${idx}`} value={p.name}>
+                            {p.name} {p.map_name !== "unknown" ? `(${p.map_name})` : ""}
+                        </option>
+                    ))}
+                </select>
+                <Button 
+                    onClick={onRefreshPoints} 
+                    className="btn-neu px-2" 
+                    title="Recargar lista de puntos"
+                >
+                    ↻
+                </Button>
+              </div>
+
               <button 
                 onClick={() => handleDeleteTray(i)} 
                 className="btn-ghost text-red-500 p-1"
@@ -916,124 +945,6 @@ function TransportTaskForm({ payload, setPayload, busy, handleTask, handleAction
           <option>CANCEL</option>
         </select>
         <Button onClick={handleAction} disabled={busy} className="btn-neu">
-          Act
-        </Button>
-      </div>
-    </Card>
-  );
-}
-
-function ErrandTaskForm({ payload, setPayload, busy, handleTask, actionSession, setActionSession, handleAction, actionType, setActionType }) {
-  const [data, setData] = useState(JSON.parse(payload));
-  useEffect(() => {
-    try {
-      setPayload(JSON.stringify(data, null, 2));
-    } catch (e) {
-      console.error("Error serializing Errand payload:", e);
-    }
-  }, [data, setPayload]);
-
-  const handleAddTask = () => {
-    setData(prev => ({
-      ...prev,
-      tasks: [...(prev.tasks || []), { type: "DELIVERY", start_point: "", end_point: "" }]
-    }));
-  };
-
-  const handleUpdateTask = (taskIndex, field, value) => {
-    setData(prev => {
-      const newTasks = [...(prev.tasks || [])];
-      if (newTasks[taskIndex]) {
-        newTasks[taskIndex][field] = value;
-      }
-      return { ...prev, tasks: newTasks };
-    });
-  };
-
-  const handleDeleteTask = (taskIndex) => {
-    setData(prev => ({
-      ...prev,
-      tasks: (prev.tasks || []).filter((_, i) => i !== taskIndex)
-    }));
-  };
-
-  return (
-    <Card>
-      <h2 className="mb-2">A2B (Errand)</h2>
-      
-      <div className="mb-4 flex gap-2 items-center">
-        <label className="text-xs font-bold w-1/4 pt-2 text-gray-500 uppercase">Auth Code:</label>
-        <input 
-            className="input-neu flex-1" 
-            placeholder="0000"
-            value={data.auth} 
-            onChange={e => setData(p => ({...p, auth: e.target.value}))}
-        />
-      </div>
-
-      <div className="mb-3 p-3 card-inset">
-        <div className="flex justify-between items-center mb-2">
-          <h4 className="font-semibold text-sm">Tasks ({(data.tasks || []).length})</h4>
-          <Button onClick={handleAddTask} className="btn-sm btn-ghost">+ Add Task</Button>
-        </div>
-        
-        <div className="space-y-3 max-h-48 overflow-y-auto pr-2">
-          {(data.tasks || []).map((task, i) => (
-            <div key={i} className="card-neu-sm p-3 space-y-2">
-                <div className="flex gap-2 items-center">
-                    <span className="text-xs font-bold w-12 text-gray-500">Task {i + 1}</span>
-                    <select
-                        className="select-neu w-32"
-                        value={task.type}
-                        onChange={e => handleUpdateTask(i, 'type', e.target.value)}
-                    >
-                        <option>DELIVERY</option>
-                        <option>COLLECTION</option>
-                    </select>
-                    <button 
-                        onClick={() => handleDeleteTask(i)} 
-                        className="btn-ghost text-red-500 p-1"
-                    >
-                        X
-                    </button>
-                </div>
-                <input
-                    className="input-neu w-full"
-                    placeholder="Start Point"
-                    value={task.start_point || ""}
-                    onChange={e => handleUpdateTask(i, 'start_point', e.target.value)}
-                />
-                <input
-                    className="input-neu w-full"
-                    placeholder="End Point"
-                    value={task.end_point || ""}
-                    onChange={e => handleUpdateTask(i, 'end_point', e.target.value)}
-                />
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <Button onClick={handleTask} disabled={busy} className="w-full mt-2 btn-neu">
-        Enviar Tarea A2B
-      </Button>
-
-      <div className="mt-4 flex gap-2">
-        <input
-            className="input-neu flex-1"
-            placeholder="Session ID"
-            value={actionSession}
-            onChange={(e) => setActionSession(e.target.value)}
-        />
-        <select
-          className="select-neu w-32"
-          value={actionType}
-          onChange={(e) => setActionType(e.target.value)}
-        >
-          <option>CANCEL</option>
-          <option>COMPLETE</option>
-        </select>
-        <Button onClick={handleAction} disabled={busy || !actionSession} className="btn-neu">
           Act
         </Button>
       </div>
@@ -1253,20 +1164,6 @@ function useOperations({ getWithPopup, postWithPopup, showError, shopId }) {
   const [groupId, setGroupId] = useState("");
   const [device, setDevice] = useState("");
   const [robotsGroupId, setRobotsGroupId] = useState("");
-  const [doorCapturePid, setDoorCapturePid] = useState("");
-  const [trayOrderPayload, setTrayOrderPayload] = useState(
-    JSON.stringify(
-      { orders: [{ table_no: "2", name: "Tea", amount: 1 }] },
-      null,
-      2
-    )
-  );
-  const [errandPayload, setErrandPayload] = useState(
-    JSON.stringify({ auth: "0000", tasks: [{ type: "DELIVERY", start_point: "P1", end_point: "P2" }] }, null, 2)
-  );
-  const [errandActionSession, setErrandActionSession] = useState("");
-  const [errandActionType, setErrandActionType] = useState("CANCEL");
-  const [errandActionAuth, setErrandActionAuth] = useState("");
 
   const addTaskToHistory = (id, label = "") => {
     if (!id) return;
@@ -1333,8 +1230,7 @@ function useOperations({ getWithPopup, postWithPopup, showError, shopId }) {
     run(() =>
       getWithPopup("Mapas", "/map-service/v1/open/list", { sn }).then((r) => {
         setMapsList(r?.data?.list || r?.list || []);
-        setPointsList([]);
-        setCurrentMap(null); 
+        // NO LIMPIAMOS PUNTOS AQUÍ PARA MANTENER EL ESTADO
         return r;
       })
     );
@@ -1349,8 +1245,6 @@ function useOperations({ getWithPopup, postWithPopup, showError, shopId }) {
       }).then((r) => {
         const data = r?.data || r;
         setCurrentMap(data);
-        setMapsList([]);
-        setPointsList([]);
         return r;
       })
     );
@@ -1374,7 +1268,7 @@ function useOperations({ getWithPopup, postWithPopup, showError, shopId }) {
               (mapNameQuery ? mapNameQuery : "unknown"),
           }));
           setPointsList(normalizedList);
-          setMapsList([]); 
+          // NO LIMPIAMOS MAPAS AQUÍ PARA MANTENER EL ESTADO
           return r;
         }
       )
@@ -1554,44 +1448,11 @@ function useOperations({ getWithPopup, postWithPopup, showError, shopId }) {
         { sn }
       )
     );
-  const handleTrayOrder = () =>
-    run(() =>
-      postWithPopup("Tray Order", "/open-platform-service/v1/tray_order", {
-        sn,
-        payload: parseJSON(trayOrderPayload),
-      })
-    );
   const handlePointGrouping = () =>
     run(() =>
       postWithPopup("Agrupar Puntos", "/map-service/v1/open/group", {
         sn,
         map_name: groupMapName,
-      })
-    );
-  const handleDoorCapture = () =>
-    run(() =>
-      getWithPopup(
-        "Door Capture",
-        "/open-platform-service/v1/door_capture/list",
-        { pid: doorCapturePid || sn, limit, offset }
-      )
-    );
-  const handleErrandTask = () =>
-    run(() =>
-      postWithPopup("A2B Task", "/open-platform-service/v1/task_errand", {
-        sn,
-        payload: parseJSON(errandPayload),
-      })
-    );
-  const handleErrandAction = () =>
-    run(() =>
-      postWithPopup("A2B Action", "/open-platform-service/v1/errand_action", {
-        sn,
-        payload: {
-          session_id: errandActionSession,
-          action: errandActionType,
-          auth: errandActionAuth || undefined,
-        },
       })
     );
 
@@ -1663,18 +1524,6 @@ function useOperations({ getWithPopup, postWithPopup, showError, shopId }) {
     setDevice,
     robotsGroupId,
     setRobotsGroupId,
-    doorCapturePid,
-    setDoorCapturePid,
-    trayOrderPayload,
-    setTrayOrderPayload,
-    errandPayload,
-    setErrandPayload,
-    errandActionSession,
-    setErrandActionSession,
-    errandActionType,
-    setErrandActionType,
-    errandActionAuth,
-    setErrandActionAuth,
     groupMapName,
     setGroupMapName,
     handleListMaps, 
@@ -1700,11 +1549,7 @@ function useOperations({ getWithPopup, postWithPopup, showError, shopId }) {
     handleGroupList,
     handleRobotsByGroup,
     handleRobotTaskState,
-    handleTrayOrder,
     handlePointGrouping,
-    handleDoorCapture,
-    handleErrandTask,
-    handleErrandAction,
   };
 }
 
@@ -1715,11 +1560,10 @@ function OperationsTab(props) {
   const productType = selectedRobot?.productType;
 
   const sections = useMemo(() => [
-    { id: "Mapas", label: "Mapas/Puntos", types: ["bellabot", "bellabot pro", "flashbot", "cc1", "pudubot"] },
-    { id: "Llamadas", label: "Llamadas", types: ["bellabot", "bellabot pro", "flashbot", "pudubot"] }, 
-    { id: "Hardware", label: "Hardware", types: ["bellabot", "bellabot pro", "flashbot", "cc1", "pudubot"] }, 
-    { id: "Tareas", label: "Tareas(Avanzado)", types: ["bellabot", "bellabot pro", "flashbot"] }, 
-    { id: "Avanzado", label: "Avanzado", types: ["bellabot", "bellabot pro", "flashbot"] }, 
+    { id: "Mapas", label: "Mapas/Puntos", types: ["bellabot", "bellabot pro", "flashbot", "cc1", "pudubot", "kettybot", "swiftbot"] },
+    { id: "Llamadas", label: "Llamadas", types: ["bellabot", "bellabot pro", "flashbot", "pudubot", "kettybot", "swiftbot"] }, 
+    { id: "Hardware", label: "Hardware", types: ["bellabot", "bellabot pro", "flashbot", "cc1", "pudubot", "kettybot", "swiftbot"] }, 
+    { id: "Tareas", label: "Tareas(Avanzado)", types: ["bellabot", "bellabot pro", "flashbot", "cc1", "pudubot", "kettybot", "swiftbot"] }, 
   ], []);
 
   const availableSections = useMemo(() => {
@@ -2117,13 +1961,6 @@ function OperationsTab(props) {
                                     >
                                     Cancelar
                                     </Button>
-                                    <Button
-                                    onClick={ops.handleCompleteCall}
-                                    disabled={ops.busy || !ops.taskId}
-                                    className="btn-neu badge-success"
-                                    >
-                                    Completar
-                                    </Button>
                                 </div>
                                 </div>
                                 <input
@@ -2251,6 +2088,8 @@ function OperationsTab(props) {
                                 handleAction={ops.handleDeliveryAction}
                                 action={ops.deliveryAction}
                                 setAction={ops.setDeliveryAction}
+                                pointsList={ops.pointsList}
+                                onRefreshPoints={ops.handlePoints}
                             />
                             <TransportTaskForm
                                 payload={ops.transportPayload}
@@ -2281,56 +2120,6 @@ function OperationsTab(props) {
                                 >
                                 Ejecutar Cancelación
                                 </Button>
-                            </Card>
-                        </div>
-                    );
-                case "Avanzado":
-                    return (
-                        <div key="Avanzado" className="space-y-4 fade-in">
-                            <Card>
-                                <h2 className="mb-2">Tray Order</h2>
-                                <CollapsibleJson
-                                label="Tray Order Payload (JSON)"
-                                value={ops.trayOrderPayload}
-                                onChange={ops.setTrayOrderPayload}
-                                height="h-24"
-                                />
-                                <Button
-                                onClick={ops.handleTrayOrder}
-                                disabled={ops.busy}
-                                className="w-full mt-2 btn-neu"
-                                >
-                                Enviar
-                                </Button>
-                            </Card>
-                            <ErrandTaskForm
-                                payload={ops.errandPayload}
-                                setPayload={ops.setErrandPayload}
-                                busy={ops.busy}
-                                handleTask={ops.handleErrandTask}
-                                actionSession={ops.errandActionSession}
-                                setActionSession={ops.setErrandActionSession}
-                                handleAction={ops.handleErrandAction}
-                                actionType={ops.errandActionType}
-                                setActionType={ops.errandActionType}
-                            />
-                            <Card>
-                                <h2 className="mb-2">Door Capture</h2>
-                                <div className="flex gap-2">
-                                <input
-                                    className="input-neu flex-1"
-                                    placeholder="PID"
-                                    value={ops.doorCapturePid}
-                                    onChange={(e) => ops.setDoorCapturePid(e.target.value)}
-                                />
-                                <Button
-                                    onClick={ops.handleDoorCapture}
-                                    disabled={ops.busy}
-                                    className="btn-neu"
-                                >
-                                    Listar
-                                </Button>
-                                </div>
                             </Card>
                         </div>
                     );
